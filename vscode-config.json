@@ -1,0 +1,144 @@
+{
+  "explorer.compactFolders": true,
+  "editor.fontFamily": "'Maple Mono NF CN', 'Monaspace Neon' ,'Cascadia Code', -apple-system,Menlo, Monaco, 'Courier New', monospace",
+  "editor.fontSize": 15,
+  "editor.fontWeight": 500,
+  "editor.fontLigatures": "'cv01', 'cv03', 'cv05', 'cv06', 'cv61'",
+  "workbench.tree.indent": 16,
+  "workbench.tree.renderIndentGuides": "always",
+  "files.associations": {
+    "*.css": "tailwindcss"
+  },
+  "editor.quickSuggestions": {
+    "strings": "on"
+  },
+  "css.enabledLanguages": [
+    "html",
+    "react",
+    "vue"
+  ],
+  "css.styleSheets": [
+    "src/**/*.css"
+  ],
+  "workbench.iconTheme": "material-icon-theme",
+  "explorer.confirmDelete": false,
+  "editor.tabSize": 2,
+  "editor.tokenColorCustomizations": {
+    "textMateRules": [
+      {
+        "scope": [
+          "keyword",
+          "keyword.operator",
+          "storage.type",
+          "storage.modifier"
+        ],
+        "settings": {
+          "fontStyle": "italic"
+        }
+      }
+    ]
+  },
+  "explorer.confirmPasteNative": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "always"
+  },
+  "eslint.validate": [
+    "vue",
+    "tsx",
+    "jsx",
+    "javascript",
+    "typescript",
+    "javascriptreact",
+    "typescriptreact"
+  ],
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  "auto-rename-tag.activationOnLanguage": [
+    "vue",
+    "tsx",
+    "jsx",
+    "html",
+    "xml",
+    "javascript",
+    "typescript",
+    "javascriptreact",
+    "typescriptreact"
+  ],
+  "auto-close-tag.activationOnLanguage": [
+    "vue",
+    "tsx",
+    "jsx",
+    "html",
+    "xml",
+    "javascript",
+    "typescript",
+    "javascriptreact",
+    "typescriptreact"
+  ],
+  "editor.linkedEditing": true,
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "dbaeumer.vscode-eslint",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": "always"
+    }
+  },
+  "[vue]": {
+    "editor.defaultFormatter": "Vue.volar",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": "always"
+    }
+  },
+  "ruff.lineLength": 120,
+  "isort.args": [
+    "--profile",
+    "black"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.inlayHints.functionReturnTypes": true,
+  "python.analysis.inlayHints.variableTypes": true,
+  "python.analysis.autoSearchPaths": true,
+  "explorer.confirmDragAndDrop": false,
+  "files.exclude": {
+    ".idea": true,
+    "**/__pycache__": true
+  },
+  "scm.inputFontSize": 18,
+  "terminal.integrated.fontSize": 15,
+  "editor.cursorBlinking": "smooth",
+  "editor.cursorSmoothCaretAnimation": "on",
+  "python.analysis.autoImportCompletions": true,
+  "files.autoSave": "afterDelay",
+  "workbench.colorCustomizations": {
+    "[GitHub Light*]": {
+      "editor.background": "#f6f8fa"
+    },
+    "[GitHub Dark*]": {
+      "editor.background": "#151b24"
+    }
+  },
+  "terminal.integrated.inheritEnv": false,
+  "github.copilot.enable": {
+    "*": false,
+    "plaintext": false,
+    "markdown": false,
+    "scminput": false,
+    "python": false
+  },
+  "security.workspace.trust.untrustedFiles": "open",
+  "git.enableSmartCommit": true,
+  "workbench.colorTheme": "cursor-dark",
+  "workbench.list.smoothScrolling": true,
+  "database-client.autoSync": true,
+  "editor.largeFileOptimizations": false,
+  "editor.formatOnPaste": true,
+  "editor.wordWrap": "on",
+  "editor.wordWrapColumn": 60
+}
