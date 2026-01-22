@@ -5,6 +5,7 @@ import pandas as pd
 import requests
 import wikitextparser as wtp
 
+from wiki.data import ignore_sections, replace_links
 from wiki.utils import to_simplified
 
 
@@ -80,7 +81,51 @@ def table_handler(table: wtp._table.Table):
             return df.to_markdown(index=False)
 
 
+def replace_tag(section: wtp._section.Section):
+    for tag in section.get_tags()[::-1]:
+        if tag.name == "ref":
+            tag.string = ""
+        elif tag.name == "":
+            pass
+
+
+def replace_link(section: wtp._section.Section):
+    for link in section.wikilinks[::-1]:
+        target = link.target.strip().lower()
+        if target.startswith(replace_links):
+            link.string = ""
+
+
+def convert_list(text: str):
+    # (?m)^       : 多行模式，匹配行首
+    # ([\*\#]+)   : 捕获组1 - 匹配任意数量的 * 或 #
+    # \s* : 允许中间有或没有空格（兼容原本就有空格的情况）
+    # (.*)$       : 捕获组2 - 匹配这一行剩下的所有内容
+    def replace_line(match):
+        markers = match.group(1)
+        content = match.group(2)
+        level = len(markers)
+        indent = "  " * (level - 1)
+
+        # 决定使用无序列表 (*) 还是有序列表 (1.)
+        if "#" in markers:
+            # 只处理一级
+            symbol = "1."
+        else:
+            symbol = "*"
+
+        return f"{indent}{symbol} {content}"
+
+    pattern = r"(?m)^([\*\#]+)\s*(.*)$"
+    return re.sub(pattern, replace_line, text)
+
+
+contents = []
+
+
 def extract(title: str):
+    contents.append(f"# {title}")
+
     parsed_content = get_parsed_content(title=title)
 
     # 提取摘要
@@ -89,23 +134,32 @@ def extract(title: str):
     summary_content = re.sub(r"（\s*[，,；;、]\s*", "（", summary_content)
     summary_content = to_simplified(summary_content)
 
+    contents.append(f"## 摘要\n{summary_content}")
+
     # 提取正文内容
     for section in parsed_content.sections[1:]:
         if section.title:
             title = section.title.strip()
-            # level = section.level
-            # print(f"{' ' * level}{level}-{title}")
-            if title == "年表":
-                for ref in section.get_tags("ref"):
-                    ref.string = ""
-                content = re.sub(
-                    r"^=+\s*.*?\s*=+[\r\n]*",
-                    "",
-                    wtp.parse(section.string).plain_text(
+            if title not in ignore_sections:
+                level = section.level
+                raw_content = re.sub(r"^=+\s*.*?\s*=+[\r\n]*", "", section.plain_text())
+
+                if raw_content.startswith("="):
+                    # 只有标题没有内容
+                    # 页面上表示为标题下面紧接子标题
+                    contents.append(f"{'#' * level} {to_simplified(title)}")
+                else:
+                    replace_tag(section=section)
+                    replace_link(section=section)
+                    content = wtp.parse(section.string).plain_text(
                         replace_templates=template_handler, replace_tables=table_handler, replace_tags=False
-                    ),
-                )
-                print(content)
+                    )
+                    content = convert_list(content)
+                    content = re.sub(r"^=+\s*.*?\s*=+[\r\n]*", "", content)
+                    contents.append(f"{level * '#'} {to_simplified(title)}\n{to_simplified(content.strip())}")
 
 
 extract(title="織田信長")
+
+with open("a.md", mode="w", encoding="utf-8") as f:
+    f.write("\n\n".join(contents))

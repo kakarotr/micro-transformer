@@ -35,3 +35,8 @@ Thumbs.db
 # Config files
 config.ini
 secrets.json
+.python-version
+a.md
+pyproject.toml
+README.md
+uv.lock

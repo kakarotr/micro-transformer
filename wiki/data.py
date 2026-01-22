@@ -27,6 +27,7 @@ tc_ignore_sections = [
     "書目",
     "註腳",
     "參看",
+    "登場作品",
     "关联作品",
     "关联项目",
     "來源文獻",
@@ -44,3 +45,5 @@ ignore_sections = [to_simplified(item) for item in tc_ignore_sections]
 ignore_sections.extend(tc_ignore_sections)
 
 fuzzy_sections = ["參考", "連結", "文獻", "参考", "链接", "文献", "外部"]
+
+replace_links = ("file:", "image:", "category:", "檔案:", "文件:", "分類:", "分类:")
