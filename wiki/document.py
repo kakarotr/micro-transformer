@@ -1,9 +1,10 @@
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
-import pandas as pd
 import requests
 import wikitextparser as wtp
+from rich.progress import track
 
 from wiki.data import ignore_sections, replace_links
 from wiki.utils import get_db_conn, to_simplified
@@ -55,7 +56,7 @@ def template_handler(template: wtp._template.Template):
     elif template_name == "bd":
         if len(template.arguments) >= 4:
             args = template.arguments
-            return f"{args[0].value}{args[1].value}-{args[2].value}{args[3].value}"
+            return f"{wtp.parse(args[0].value).plain_text()}{wtp.parse(args[1].value).plain_text()}-{wtp.parse(args[2].value).plain_text()}{wtp.parse(args[3].value).plain_text()}"
     elif template_name in ["columns-list", "col-begin", "col-end", "div col"]:
         if len(template.arguments) > 0:
             return wtp.parse(template.arguments[-1].value).plain_text()
@@ -73,49 +74,37 @@ def clean_cell_text(cell_content):
     content_str = str(cell_content)
     content_str = re.sub(r"(?i)^[a-z\s]+=[^|]+\|\s*", "", content_str)
     text = wtp.parse(content_str).plain_text()
-    text = text.replace("\n", "<br>").replace("\r", "")
+    text = text.replace("\n", "").replace("\r", "").replace("&nbsp;", "").replace("<br>", "")
     text = re.sub(r"\s*[▲△○●◎]\s*", "", text)
     text = re.sub(r"(?i)^[a-z\s]+=[^|]+\|\s*", "", text)
+    text = re.sub(r"\s+", "", text)
     return text.strip()
 
 
 def table_handler(table: wtp._table.Table):
     """
-    处理 Wiki 表格：补全缺失列、清洗数据、自动移除空列（如被清洗掉的图片列）
+    扁平化Wiki表格
     """
     raw_data = table.data(span=True)
-    if not raw_data or len(raw_data) == 0:
-        return ""
-    has_header_symbol = "!" in table.string[:100]
-    first_cell_content = str(raw_data[0][0]) if raw_data[0] else ""
-    is_list_inside = first_cell_content.strip().startswith("*")
-    if not has_header_symbol or is_list_inside:
-        merged_text = []
-        for row in raw_data:
-            for cell in row:
-                if cell and str(cell).strip():
-                    cell_parsed = wtp.parse(str(cell)).plain_text()
-                    merged_text.append(cell_parsed.strip())
-        return "\n".join(merged_text)
-    else:
-        cleaned_data = [[clean_cell_text(cell) for cell in row] for row in raw_data]
-        if len(cleaned_data) < 2:
-            return ""
-        max_cols = max(len(row) for row in cleaned_data)
-        normalized_data = [row + [""] * (max_cols - len(row)) for row in cleaned_data]
-        df = pd.DataFrame(normalized_data)
-        new_header = df.iloc[0]
-        df = df[1:]
-        df.columns = new_header
-        df = df.replace(r"^\s*$", float("nan"), regex=True)
-        df = df.dropna(axis=1, how="all")
-        df = df.fillna("")
-        return df.to_markdown(index=False)
+    header = [clean_cell_text(item) for item in raw_data[0]]
+    rows = raw_data[1:]
+    full_content = []
+    for row in rows:
+        if row:
+            contents = []
+            for idx, item in enumerate(row):
+                text = clean_cell_text(item)
+                if text:
+                    contents.append(f"{header[idx]}{text}，")
+            full_content.append(("".join(contents))[:-1] + "。")
+    return "\n".join(full_content)
 
 
 def replace_tag(text: wtp.WikiText):
     for tag in text.get_tags()[::-1]:
         if tag.name == "ref":
+            tag.string = ""
+        else:
             tag.string = ""
 
 
@@ -200,6 +189,7 @@ def replace_by_pattern(text: str):
     new_text = re.sub(r"（\s*）|\(\s*\)", "", new_text)
     new_text = re.sub(r"-{\s*(.*?)\s*}-", r"\1", new_text)
     new_text = re.sub(r"^=+\s*.*?\s*=+[\r\n]*", "", new_text)
+    # new_text = re.sub(r"\s+", "", new_text)
     return new_text
 
 
@@ -207,41 +197,49 @@ def extract(title: str):
     contents = []
     wiki_page = WikiPage(name=title, summary="", sections=[], full_content="")
 
-    contents.append(f"{to_simplified(title)}\n\n")
+    contents.append(f"# {to_simplified(title)}\n\n")
 
     parsed_content = get_parsed_content(title=title)
 
     # 提取摘要
     summary = parsed_content.sections[0]
-    summary_content = summary.plain_text(replace_templates=template_handler).strip()
-    summary_content = replace_by_pattern(summary_content)
-    summary_content = to_simplified(summary_content)
+    replace_link(text=summary)
+    summary_content = summary.plain_text(replace_templates=template_handler, replace_wikilinks=True).strip()
+    summary_content = replace_by_pattern(text=summary_content)
+    summary_content = to_simplified(text=summary_content)
     wiki_page.summary = summary_content
 
-    contents.append(f"{summary_content}\n\n")
+    contents.append(f"{summary_content}{'\n\n' if len(parsed_content.sections) > 1 else ''}")
 
     # 提取正文内容
-    for section in parsed_content.sections[1:]:
+    for idx, section in enumerate(parsed_content.sections[1:], start=2):
         if section.title:
             title = wtp.parse(section.title.strip()).plain_text()
             if title not in ignore_sections:
                 raw_pure_text = get_pure_own_content(section=section)
                 level = section.level
                 if not raw_pure_text:
-                    contents.append(f"{to_simplified(title)}\n\n")
+                    content = ""
+                    contents.append(f"{'#' * level} {to_simplified(title)}\n\n")
                 else:
                     pure_text = wtp.parse(raw_pure_text)
                     replace_tag(text=pure_text)
                     replace_link(text=pure_text)
                     content = pure_text.plain_text(
-                        replace_templates=template_handler, replace_tables=table_handler, replace_tags=False
+                        replace_templates=template_handler,
+                        replace_tables=table_handler,
+                        replace_wikilinks=True,
+                        replace_tags=False,
                     )
                     content = replace_by_pattern(content)
                     content = convert_list(content)
                     content = convert_definition_term(content)
-                    contents.append(f"{to_simplified(title)}\n")
-                    contents.append(f"{to_simplified(content.strip())}\n\n")
-    wiki_page.full_content = "".join(contents)
+                    contents.append(f"{'#' * level} {to_simplified(title)}\n")
+                    contents.append(f"{to_simplified(content.strip())} \n\n")
+                section = WikiSection(title=title, content=content)
+                wiki_page.sections.append(section)
+
+    wiki_page.full_content = "".join(contents).rstrip("\n")
     return wiki_page
 
 
@@ -249,6 +247,19 @@ def fetch_page_content():
     conn = get_db_conn()
     cursor = conn.execute("select name_tc from wiki_page where status = 0")
     rows = cursor.fetchall()
-    for row in rows:
+    for row in track(rows):
         title = row[0]
-        extract(title=title)
+        page = extract(title=title)
+        conn.execute(
+            "insert into wiki_page_content (name, summary, sections, full_content) values (?, ?, ?, ?)",
+            (
+                to_simplified(page.name),
+                page.summary,
+                json.dumps([asdict(i) for i in page.sections], ensure_ascii=False),
+                page.full_content,
+            ),
+        )
+        conn.execute("update wiki_page set status = 1 where name_tc = ?", (title,))
+        conn.commit()
+
+    conn.close()

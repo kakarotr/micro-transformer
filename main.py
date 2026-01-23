@@ -5,8 +5,10 @@ load_dotenv()
 
 if __name__ == "__main__":
     from wiki.category import insert_page_by_category
-    from wiki.document import extract
+    from wiki.document import extract, fetch_page_content
 
-    content = extract(title="織田信長")
-    with open("a.md", mode="w", encoding="utf-8") as f:
-        f.write(content.full_content)
+    # 織田信長
+    # with open("a.md", mode="w", encoding="utf-8") as f:
+    #     f.write(extract(title="織田信長").full_content)
+
+    fetch_page_content()
