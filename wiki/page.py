@@ -6,7 +6,7 @@ import requests
 import wikitextparser as wtp
 from rich.progress import track
 
-from wiki.data import ignore_sections, replace_links
+from wiki.data import fuzzy_sections, ignore_sections, replace_links
 from wiki.utils import get_db_conn, to_simplified
 
 
@@ -219,7 +219,7 @@ def extract(title: str):
     for idx, section in enumerate(parsed_content.sections[1:], start=2):
         if section.title:
             title = wtp.parse(section.title.strip()).plain_text()
-            if title not in ignore_sections:
+            if title not in ignore_sections and not any(fs in title for fs in fuzzy_sections):
                 # print(title)
                 # if title == "朝廷政策":
                 #     print(section.string)

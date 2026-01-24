@@ -46,9 +46,13 @@ tc_ignore_sections = [
     "出處",
     "附註",
     "附記",
+    "其他",
     "影視劇",
     "肖像画",
     "铜像等",
+    "相關作品",
+    "關連項目",
+    "文學作品",
     "參考來源",
     "模型玩具",
     "登場作品",
@@ -81,7 +85,7 @@ tc_ignore_sections = [
 ignore_sections = [to_simplified(item) for item in tc_ignore_sections]
 ignore_sections.extend(tc_ignore_sections)
 
-tc_fuzzy_sections = ["參考", "連結", "文獻", "來源", "外部"]
+tc_fuzzy_sections = ["參考", "連結", "文獻", "資料", "遊戲", "小說", "電影", "電視劇", "影視劇"]
 fuzzy_sections = [to_simplified(item) for item in tc_fuzzy_sections]
 fuzzy_sections.extend(tc_fuzzy_sections)
 
