@@ -7,7 +7,7 @@ import wikitextparser as wtp
 from rich.progress import track
 
 from wiki.data import fuzzy_sections, ignore_sections, replace_links
-from wiki.utils import get_db_conn, to_simplified
+from wiki.utils import get_db_conn
 
 
 @dataclass
@@ -26,7 +26,7 @@ class WikiPage:
 
 def get_parsed_content(title: str):
     response = requests.get(
-        url="https://zh.wikipedia.org/w/api.php",
+        url="https://ja.wikipedia.org/w/api.php",
         params={
             "action": "query",
             "format": "json",
@@ -197,11 +197,27 @@ def replace_by_pattern(text: str):
     return new_text
 
 
+def clean_raw_text(raw_text: str):
+    text = wtp.parse(raw_text)
+    replace_tag(text=text)
+    replace_link(text=text)
+    content = text.plain_text(
+        replace_templates=template_handler,
+        replace_tables=table_handler,
+        replace_wikilinks=True,
+        replace_tags=False,
+    )
+    content = replace_by_pattern(content)
+    content = convert_list(content)
+    content = convert_definition_term(content)
+    return content.strip()
+
+
 def extract(title: str):
     contents = []
     wiki_page = WikiPage(name=title, summary="", sections=[], full_content="")
 
-    contents.append(f"# {to_simplified(title)}\n\n")
+    contents.append(f"# {title}\n\n")
 
     parsed_content = get_parsed_content(title=title)
 
@@ -210,41 +226,38 @@ def extract(title: str):
     replace_link(text=summary)
     summary_content = summary.plain_text(replace_templates=template_handler, replace_wikilinks=True).strip()
     summary_content = replace_by_pattern(text=summary_content)
-    summary_content = to_simplified(text=summary_content)
     wiki_page.summary = summary_content
 
     contents.append(f"{summary_content}{'\n\n' if len(parsed_content.sections) > 1 else ''}")
 
+    current_ignore_level = None
     # 提取正文内容
-    for idx, section in enumerate(parsed_content.sections[1:], start=2):
-        if section.title:
-            title = wtp.parse(section.title.strip()).plain_text()
-            if title not in ignore_sections and not any(fs in title for fs in fuzzy_sections):
-                # print(title)
-                # if title == "朝廷政策":
-                #     print(section.string)
-                raw_pure_text = get_pure_own_content(section=section)
-                level = section.level
-                if not raw_pure_text:
-                    content = ""
-                    contents.append(f"{'#' * level} {to_simplified(title)}\n\n")
-                else:
-                    pure_text = wtp.parse(raw_pure_text)
-                    replace_tag(text=pure_text)
-                    replace_link(text=pure_text)
-                    content = pure_text.plain_text(
-                        replace_templates=template_handler,
-                        replace_tables=table_handler,
-                        replace_wikilinks=True,
-                        replace_tags=False,
-                    )
-                    content = replace_by_pattern(content)
-                    content = convert_list(content)
-                    content = convert_definition_term(content)
-                    contents.append(f"{'#' * level} {to_simplified(title)}\n")
-                    contents.append(f"{to_simplified(content.strip())} \n\n")
-                section = WikiSection(title=title, content=content)
-                wiki_page.sections.append(section)
+    for _, section in enumerate(parsed_content.sections[1:], start=2):
+        level = section.level
+
+        if current_ignore_level is not None:
+            if level > current_ignore_level:
+                continue
+            else:
+                current_ignore_level = None
+
+        if not section.title:
+            continue
+
+        title = wtp.parse(section.title.strip()).plain_text()
+        if title in ignore_sections:
+            current_ignore_level = level
+            continue
+
+        raw_pure_text = get_pure_own_content(section=section)
+        content = clean_raw_text(raw_text=raw_pure_text)
+        if content:
+            contents.append(f"{'#' * level} {title}\n")
+            contents.append(f"{content} \n\n")
+        else:
+            contents.append(f"{'#' * level} {title}\n\n")
+        section = WikiSection(title=title, content=content)
+        wiki_page.sections.append(section)
 
     wiki_page.full_content = "".join(contents).rstrip("\n")
     return wiki_page
@@ -260,7 +273,7 @@ def fetch_page_content():
         conn.execute(
             "insert into wiki_page_content (name, summary, sections, full_content) values (?, ?, ?, ?)",
             (
-                to_simplified(page.name),
+                page.name,
                 page.summary,
                 json.dumps([asdict(i) for i in page.sections], ensure_ascii=False),
                 page.full_content,

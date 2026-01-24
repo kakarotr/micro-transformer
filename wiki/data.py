@@ -82,8 +82,26 @@ tc_ignore_sections = [
     "參考書目",
     "幸若舞《敦盛》",
 ]
-ignore_sections = [to_simplified(item) for item in tc_ignore_sections]
-ignore_sections.extend(tc_ignore_sections)
+ignore_sections2 = [to_simplified(item) for item in tc_ignore_sections]
+ignore_sections2.extend(tc_ignore_sections)
+ignore_sections = [
+    "先祖",
+    "脚注",
+    "墓所・霊廟・寺社",
+    "関連事項",
+    "参考文献",
+    "関連文献",
+    "関連項目",
+    "外部リンク",
+    "豊臣秀吉を題材とする作品",
+    "テレビ番組",
+    "史跡等",
+    "関連史料",
+    "関連作品",
+    "展覧会",
+    "脚注",
+    "参考文献",
+]
 
 tc_fuzzy_sections = ["參考", "連結", "文獻", "資料", "遊戲", "小說", "電影", "電視劇", "影視劇"]
 fuzzy_sections = [to_simplified(item) for item in tc_fuzzy_sections]
