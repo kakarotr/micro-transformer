@@ -131,16 +131,19 @@ def convert_list(text: str):
         # group(2) 是标记符 (如 *, #, ::, *:)
         # group(3) 是正文内容
         markers = match.group(2)
-        content = match.group(3)
+        content = match.group(3).strip()
         level = len(markers)
 
+        # 当层级变浅时，重置更深层级的计数器
         keys_to_del = [k for k in counters if k > level]
         for k in keys_to_del:
             del counters[k]
+
         last_marker = markers[-1]
+
         if last_marker == ":":
-            symbol = "> " * level
-            indent = ""
+            symbol = ""
+            indent = "  " * level
         elif last_marker == "#":
             current_count = counters.get(level, 0) + 1
             counters[level] = current_count
@@ -148,16 +151,17 @@ def convert_list(text: str):
             indent = "  " * (level - 1)
         else:
             counters[level] = 0
-            symbol = "* "
+            symbol = "- "
             indent = "  " * (level - 1)
 
         return f"{indent}{symbol}{content}"
 
-    # (?m)^       : 多行模式行首
-    # (\s*)       : Group 1 - 允许行首有空格 (容错)
-    # ([\*\#\:]+) : Group 2 - 捕获标记符
+    # Regex 说明:
+    # (?m)^      : 多行模式行首
+    # (\s*)      : Group 1 - 允许行首有空格 (容错)
+    # ([\*\#\:]+): Group 2 - 捕获标记符
     # \s* : 忽略标记符后的空格
-    # (.*)$       : Group 3 - 捕获正文
+    # (.*)$      : Group 3 - 捕获正文
     pattern = r"(?m)^(\s*)([\*\#\:]+)\s*(.*)$"
 
     return re.sub(pattern, replace_line, text)
@@ -216,6 +220,9 @@ def extract(title: str):
         if section.title:
             title = wtp.parse(section.title.strip()).plain_text()
             if title not in ignore_sections:
+                # print(title)
+                # if title == "朝廷政策":
+                #     print(section.string)
                 raw_pure_text = get_pure_own_content(section=section)
                 level = section.level
                 if not raw_pure_text:
