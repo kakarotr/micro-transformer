@@ -50,7 +50,7 @@ def get_parsed_content(title: str):
 
 def template_handler(template: wtp._template.Template):
     template_name = template.name
-    if template_name in ["zy", "link-ja", "Quotation"]:
+    if template_name in ["zy", "link-ja"]:
         if len(template.arguments) > 0:
             return wtp.parse(template.arguments[0].value).plain_text()
     elif template_name == "bd":
@@ -134,7 +134,6 @@ def convert_list(text: str):
         content = match.group(3).strip()
         level = len(markers)
 
-        # 当层级变浅时，重置更深层级的计数器
         keys_to_del = [k for k in counters if k > level]
         for k in keys_to_del:
             del counters[k]
@@ -149,20 +148,22 @@ def convert_list(text: str):
             counters[level] = current_count
             symbol = f"{current_count}. "
             indent = "  " * (level - 1)
+        # elif last_marker == ";":
+        #     counters[level] = 0
+        #     symbol = ""
+        #     content = f"**{content}**"
+        #     indent = "  " * (level - 1)
         else:
             counters[level] = 0
             symbol = "- "
-            indent = "  " * (level - 1)
+            calc_level = level
+            if last_marker == ";" and level > 1:
+                calc_level = level - 1
+            indent = "  " * (calc_level - 1)
 
         return f"{indent}{symbol}{content}"
 
-    # Regex 说明:
-    # (?m)^      : 多行模式行首
-    # (\s*)      : Group 1 - 允许行首有空格 (容错)
-    # ([\*\#\:]+): Group 2 - 捕获标记符
-    # \s* : 忽略标记符后的空格
-    # (.*)$      : Group 3 - 捕获正文
-    pattern = r"(?m)^(\s*)([\*\#\:]+)\s*(.*)$"
+    pattern = r"(?m)^(\s*)([\*\#\:\;]+)\s*(.*)$"
 
     return re.sub(pattern, replace_line, text)
 
@@ -245,11 +246,14 @@ def extract(title: str):
             continue
 
         title = wtp.parse(section.title.strip()).plain_text()
+        title = re.sub(r"^[A-Za-z0-9]+\.\s*", "", title)
         if title in ignore_sections:
             current_ignore_level = level
             continue
-
+        # print(title)
         raw_pure_text = get_pure_own_content(section=section)
+        # if title == "饗応役の解任":
+        #     print(raw_pure_text)
         content = clean_raw_text(raw_text=raw_pure_text)
         if content:
             contents.append(f"{'#' * level} {title}\n")

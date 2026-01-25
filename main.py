@@ -9,5 +9,5 @@ if __name__ == "__main__":
 
     # 織田信長
     with open("a.md", mode="w", encoding="utf-8") as f:
-        f.write(extract(title="徳川家康").full_content)
+        f.write(extract(title="本能寺の変").full_content)
     # fetch_page_content()
