@@ -43,7 +43,8 @@ class WikiPageParser:
             if section_title in ignore_sections or any(fuzzy in (section_title) for fuzzy in fuzzy_sections):
                 current_ignore_level = level
                 continue
-
+            if section_title == "一門衆":
+                print(section.string)
             wiki_section = WikiSection(title=section_title, level=level, blocks=self._clean_section(section=section))
             sections.append(wiki_section)
         return WikiPage(title=title, category_name="", lang=lang, sections=sections, full_content="")
@@ -154,8 +155,9 @@ class WikiPageParser:
         )
         content = self._clean_by_pattern(text=content)
         content = self._convert_list(text=content)
+        self.get_list_blocks_indices(content)
         content = self._convert_definition_term(text=content)
-        content = "\n".join([line.strip() for line in content.split("\n")])
+        content = "\n".join([line.rstrip() for line in content.split("\n")])
         return content.strip().replace("\n\t\n", "\n\n").replace("\n\n\n", "\n\n").replace("{{col|", "")
 
     def _template_handler(self, template: wtp._template.Template):
@@ -186,6 +188,8 @@ class WikiPageParser:
             content = match.group(3).strip()
             content = re.sub(r"\s+[-–—]+\s+", "，", content)
             level = len(markers)
+            if level > 2:
+                return ""
 
             keys_to_del = [k for k in counters if k > level]
             for k in keys_to_del:
@@ -226,3 +230,43 @@ class WikiPageParser:
         转换为 Markdown 的加粗文本 (**术语**)
         """
         return re.sub(r"(?m)^;\s*(.*)$", r"**\1**", text)
+
+    def get_list_blocks_indices(self, text):
+        # 你的正则表达式
+        list_line_pattern = re.compile(r"(?m)^(\s*)([\*\#\:\;]+)\s*(.*)$")
+
+        # 1. 找到所有匹配的“行”
+        # finditer 返回的是迭代器，包含每一次匹配的 start() 和 end()
+        matches = list(list_line_pattern.finditer(text))
+
+        if not matches:
+            return []
+
+        blocks = []
+
+        # 初始化第一个块
+        current_block_start = matches[0].start()
+        current_block_end = matches[0].end()
+
+        # 2. 遍历合并相邻的行
+        for i in range(1, len(matches)):
+            prev_match = matches[i - 1]
+            curr_match = matches[i]
+
+            # 获取上一行结束 到 下一行开始 之间的内容
+            gap = text[prev_match.end() : curr_match.start()]
+
+            # 判定：如果中间只是换行符（\n 或 \r\n），说明它们是连续的列表
+            if gap.strip() == "":
+                # 延长当前块的结束位置
+                current_block_end = curr_match.end()
+            else:
+                # 否则，说明中间断开了（有空行或普通文本），保存当前块，开始新块
+                blocks.append((current_block_start, current_block_end))
+                current_block_start = curr_match.start()
+                current_block_end = curr_match.end()
+
+        # 不要忘记加入最后一个块
+        blocks.append((current_block_start, current_block_end))
+
+        return blocks

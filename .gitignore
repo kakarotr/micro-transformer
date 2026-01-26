@@ -36,8 +36,8 @@ Thumbs.db
 config.ini
 secrets.json
 .python-version
-preview.md
-preview.json
 pyproject.toml
 README.md
 uv.lock
+
+preview/*
