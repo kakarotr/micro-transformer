@@ -9,7 +9,7 @@ if __name__ == "__main__":
     test_titles = ["織田信長", "豊臣秀吉", "徳川家康", "武田信玄", "上杉謙信", "桶狭間の戦い", "本能寺の変"]
     # 織田信長
     parser = WikiPageParser()
-    wiki_page = parser.parse(title="豊臣秀吉", lang="ja")
+    wiki_page = parser.parse(title="織田信長", lang="ja")
     if wiki_page:
         with open("preview/preview.json", mode="w", encoding="utf-8") as f:
             f.write(wiki_page.model_dump_json(indent=2))

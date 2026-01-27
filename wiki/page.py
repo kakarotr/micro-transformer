@@ -185,9 +185,9 @@ class WikiPageParser:
         for tag in doc.find_all(class_="gallery"):
             tag.decompose()
 
-        # 删除没有class的div
+        # 删除没有class但是有style的的div
         for div in doc.find_all("div", recursive=False):
-            if not div.has_attr("class"):
+            if not div.has_attr("class") and div.has_attr("style"):
                 div.decompose()
 
         # 删除只有一个子元素的dl
@@ -236,7 +236,7 @@ class WikiPageParser:
 
     def _convert_list(self, doc: bs4.Tag | None):
         """
-        转换List(HTML的ul元素)
+        转换List
 
         大部分ul元素没有list title, 可能部分Section有使用dl作为title
         """
