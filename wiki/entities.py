@@ -2,9 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+type BlockType = Literal["text", "table", "list-title", "list-item"]
+
 
 class SectionBlock(BaseModel):
-    type: Literal["text", "table"]
+    type: BlockType
     content: str | None
 
 

@@ -1,272 +1,259 @@
 import os
 import re
+import statistics
+from collections import defaultdict
 
+import bs4
 import requests
-import wikitextparser as wtp
+from bs4 import BeautifulSoup
 from openai import OpenAI
 
 from utils.db import get_db_conn
-from wiki.data import fuzzy_sections, ignore_sections, replace_links
-from wiki.entities import SectionBlock, WikiPage, WikiSection
+from wiki.data import fuzzy_sections, ignore_sections
+from wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
 
 
 class WikiPageParser:
-    def __init__(self):
+    def __init__(self) -> None:
+        self.max_list_mean_char = 10
         self.conn = get_db_conn()
         self.llm_client = OpenAI(base_url=os.environ["DEEPSEEK_URL"], api_key=os.environ["DEEPSEEK_KEY"])
 
     def parse(self, title: str, lang: str = "zh"):
-        sections: list[WikiSection] = []
-        parsed_content = self._get_raw_content(title=title, lang=lang)
-        # 清洗摘要
-        summary = self._clean_text(text=parsed_content.sections[0].string)
-        sections.append(WikiSection(title="summary", level=0, blocks=[SectionBlock(type="text", content=summary)]))
+        content_doc = self._get_html_doc(title=title, lang=lang)
+        if not content_doc:
+            return None
+        wiki_page = WikiPage(title=title, category_name="", lang=lang, sections=[], full_content="")
+
+        # 处理摘要
+        marker = content_doc.select_one("div.mw-heading")
+        if marker:
+            contents = []
+            for p_tag in marker.find_previous_siblings("p"):
+                contents.insert(0, p_tag.get_text(strip=True))
+                p_tag.decompose()
+            wiki_page.sections.append(
+                WikiSection(title="summary", level=2, blocks=[SectionBlock(type="text", content="\n\n".join(contents))])
+            )
 
         current_ignore_level = None
+        current_level = 0
+        current_title = ""
 
-        # 清洗正文
-        for section in parsed_content.sections[1:]:
-            level = section.level
+        for child in content_doc.find_all(recursive=False):
+            if child.has_attr("class") and "mw-heading" in child["class"]:
+                level, title = self._handle_title(title_tag=child, classes=child["class"])  # type: ignore
+                if current_ignore_level is not None:
+                    if level > current_ignore_level:
+                        continue
+                    else:
+                        current_ignore_level = None
 
-            if current_ignore_level is not None:
-                if level > current_ignore_level:
+                current_level = level
+                current_title = title
+
+                if title in ignore_sections or any(fuzzy in title for fuzzy in fuzzy_sections):
+                    current_ignore_level = level
                     continue
-                else:
-                    current_ignore_level = None
+                wiki_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
+            else:
+                if current_ignore_level is not None:
+                    if current_level >= current_ignore_level:
+                        continue
+                # 处理段落
+                if child.name == "p":
+                    content = child.get_text(strip=True)
+                    self._add_block(
+                        doc=child, page=wiki_page, current_title=current_title, block_type="text", content=content
+                    )
 
-            if not section.title:
-                continue
+                # 处理表格或者列表
+                elif child.name == "table":
+                    if child.has_attr("class") and "multicol" in child["class"]:
+                        list_title, items = self._handle_list(doc=child)
+                        self._add_list_to_block(
+                            doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                        )
+                    else:
+                        pass
 
-            section_title = wtp.parse(section.title.strip()).plain_text()
-            section_title = re.sub(r"^[\(\[\{\<\"\'「（【《“](.*?)[\)\]\}\>\"\'」）】》”]$", r"\1", section_title)
-            section_title = re.sub(r"^[A-Za-z0-9]+\.\s*", "", section_title)
-            if section_title in ignore_sections or any(fuzzy in (section_title) for fuzzy in fuzzy_sections):
-                current_ignore_level = level
-                continue
-            if section_title == "一門衆":
-                print(section.string)
-            wiki_section = WikiSection(title=section_title, level=level, blocks=self._clean_section(section=section))
-            sections.append(wiki_section)
-        return WikiPage(title=title, category_name="", lang=lang, sections=sections, full_content="")
+                # 处理列表
+                elif child.name == "ul":
+                    list_title, items = self._handle_list(doc=child)
+                    self._add_list_to_block(
+                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                    )
 
-    def _clean_summary(self, summary: wtp.WikiText):
-        self._clean_link(text=summary)
-        summary_content = summary.plain_text(replace_templates=self._template_handler, replace_wikilinks=True).strip()
-        return self._clean_text(text=summary_content)
+                # 处理列表
+                elif child.name == "div":
+                    list = child.find("table", class_="multicol", recursive=False)
+                    list_title, items = self._handle_list(list)
+                    self._add_list_to_block(
+                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                    )
 
-    def _get_raw_content(self, title: str, lang: str):
+                    list = child.find("ul", recursive=False)
+                    list_title, items = self._handle_list(list)
+                    self._add_list_to_block(
+                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                    )
+
+                # 处理描述列表
+                elif child.name == "dl":
+                    if (
+                        len(child.find_all(recursive=False)) > 1
+                        and child.find_all("dt", recursive=False)
+                        and child.find("dd", recursive=False)
+                    ):
+                        list_titles, items = self._handle_dl(doc=child)
+                        for idx, title in enumerate(list_titles):
+                            item = items[idx]
+                            self._add_list_to_block(
+                                doc=child,
+                                page=wiki_page,
+                                current_title=current_title,
+                                list_title=list_title,
+                                items=item,
+                            )
+        return wiki_page
+
+    def _get_html_doc(self, title: str, lang: str):
         response = requests.get(
             url=f"https://{lang}.wikipedia.org/w/api.php",
             params={
-                "action": "query",
+                "action": "parse",
                 "format": "json",
-                "titles": title,
-                "prop": "revisions",
-                "rvprop": "content",
-                "rvslots": "main",
-                "exintro": True,
-                "explaintext": True,
+                "page": title,
+                "prop": "text",
+                "disableeditsection": 1,
             },
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
             },
         )
+        data = response.json()
+        if "parse" in data:
+            html_content = data["parse"]["text"]["*"]
+            soup = BeautifulSoup(html_content, "html.parser")
+            content_doc = soup.find()
+            if content_doc:
+                self._clean_tag(doc=content_doc)
+                return content_doc
+        return None
 
-        pages = response.json()["query"]["pages"]
-        page_id = next(iter(pages))
-        content = pages[page_id]["revisions"][0]["slots"]["main"]["*"]
-        return wtp.parse(content)
+    def _clean_tag(self, doc: bs4.Tag):
+        for a_tag in doc.find_all("a"):
+            a_tag.unwrap()
 
-    def _clean_link(self, text: wtp.WikiText):
-        for link in text.wikilinks[::-1]:
-            target = link.target.strip().lower()
-            if target.startswith(replace_links):
-                link.string = ""
+        for tag in doc.find_all(["style", "meta", "figure", "sup", "blockquote"]):
+            tag.decompose()
 
-    def _clean_tag(self, text: wtp.WikiText):
-        for tag in text.get_tags()[::-1]:
-            if tag.name == "ref":
-                tag.string = ""
+        for small_tag in doc.find_all("small"):
+            if small_tag.parent and small_tag.parent.name == "p":
+                small_tag.parent.decompose()
+
+        for block_tag in doc.find_all("b"):
+            block_tag.replace_with(f"**{block_tag.get_text()}**")
+
+        for title_tag in doc.find_all("div", class_="mw-heading"):
+            title = title_tag.get_text(strip=True)
+            title_tag.clear()
+            title_tag.string = title
+
+        for tag in doc.find_all("div", class_=["thumb", "rellink", "hatnote", "side-box"]):
+            tag.decompose()
+
+        for tag in doc.find_all(class_="gallery"):
+            tag.decompose()
+
+    def _handle_title(self, title_tag: bs4.Tag, classes: list[str]):
+        level = int(classes[-1][-1])
+        return level, title_tag.string or ""
+
+    def _find_title(self, tag: bs4.Tag):
+        for prev_sibling in tag.find_previous_siblings():
+            if prev_sibling.has_attr("class") and "mw-heading" in prev_sibling["class"]:
+                return prev_sibling.string or ""
+        return ""
+
+    def _compute_list_mean_char(self, doc: bs4.Tag, is_table: bool = False):
+        total = 0
+        count = 0
+        for li in doc.find_all("li"):
+            count += 1
+            text = re.sub(r"（[^）]+）|\([^)]+\)", "", li.get_text(strip=True))
+            total += len(text)
+        return total // count if count != 0 else 0
+
+    def _handle_list(self, doc: bs4.Tag | None):
+        items = []
+        list_title = ""
+        if doc:
+            mean_char = self._compute_list_mean_char(doc=doc, is_table=True)
+            prev_tag = doc.find_previous_sibling()
+            if prev_tag and prev_tag.name == "dl":
+                list_title = prev_tag.get_text(strip=True)
+
+            if mean_char < self.max_list_mean_char:
+                items = [li.get_text(strip=True) for li in doc.find_all("li")]
+                items.append("llm invoke")
             else:
-                tag.string = ""
+                items = [li.get_text(strip=True) for li in doc.find_all("li")]
+        return list_title, items
 
-    def _clean_table(self, table: wtp._table.Table):
-        return "table placeholder"
-
-    def _clean_by_pattern(self, text: str):
-        new_text = re.sub(r"（\s*[，,；;、]\s*", "（", text)
-        new_text = re.sub(r"\s+([（\(])", r"\1", new_text)
-        new_text = re.sub(r"（\s*）|\(\s*\)", "", new_text)
-        new_text = re.sub(r"※\s*", "", new_text)
-        new_text = re.sub(r"（\s*）|\(\s*\)", "", new_text)
-        new_text = re.sub(r"-{\s*(.*?)\s*}-", r"\1", new_text)
-        new_text = re.sub(r"^=+\s*.*?\s*=+[\r\n]*", "", new_text)
-        # new_text = re.sub(r"\s+", "", new_text)
-        return new_text
-
-    def _clean_section(self, section: wtp._section.Section):
-        content = section.string
-
-        # 查询所有标题的位置, matches[0]: 当前章节的标题, matches[1]: 第一个子章节的标题
-        matches = list(re.finditer(r"(?m)^=+\s*.*?\s*=+[\r\n]*", content))
-        if len(matches) > 1:
-            # 有子章节, 截取当前标题到第一个子标题的内容
-            sub_section_start = matches[1].start()
-            own_content_with_header = content[:sub_section_start]
+    def _add_block(self, doc: bs4.Tag, page: WikiPage, current_title: str, block_type: BlockType, content: str):
+        if current_title == self._find_title(tag=doc):
+            last_section = page.sections[-1]
+            if last_section.blocks and last_section.blocks[-1].type == block_type:
+                block_content = last_section.blocks[-1].content
+                last_section.blocks[-1].content = f"{block_content}\n\n{content}"
+            else:
+                last_section.blocks.append(SectionBlock(type=block_type, content=content))
         else:
-            # 没有子章节
-            own_content_with_header = content
+            page.sections[-1].blocks.append(SectionBlock(type=block_type, content=content))
 
-        # 去除标题
-        content = re.sub(r"(?m)^=+\s*.*?\s*=+[\r\n]*", "", own_content_with_header, count=1).strip()
-        # 分割正文与表格
-        if content:
-            blocks: list[SectionBlock] = []
-            parsed_content = wtp.parse(content)
-            tables = parsed_content.tables
-            last_pos = 0
-            for table in tables:
-                start, end = table.span
-                content_chunk = parsed_content.string[last_pos:start]
-                if content_chunk.strip():
-                    cleaned_text = self._clean_text(text=content_chunk)
-                    if cleaned_text:
-                        blocks.append(SectionBlock(type="text", content=cleaned_text))
-                blocks.append(SectionBlock(type="table", content=self._clean_table(table=table)))
-                last_pos = end
-            remaining_text = parsed_content.string[last_pos:]
-            if remaining_text.strip():
-                cleaned_text = self._clean_text(text=remaining_text)
-                if cleaned_text:
-                    blocks.append(SectionBlock(type="text", content=cleaned_text))
-            return blocks
-        else:
-            cleaned_content = self._clean_text(text=content)
-            return [SectionBlock(type="text", content=cleaned_content if cleaned_content else None)]
+    def _handle_dl(self, doc: bs4.Tag):
+        list_titles: list[str] = []
+        values: dict[str, list[str]] = defaultdict(list)
+        current_title = ""
+        for tag in doc.find_all(["dt", "dd"], recursive=False):
+            text = tag.get_text(strip=True)
+            if tag.name == "dt":
+                list_titles.append(text)
+                current_title = text
+            if tag.name == "dd":
+                values[current_title].append(text)
 
-    def _clean_text(self, text: str):
-        raw_content = wtp.parse(text)
-        self._clean_tag(text=raw_content)
-        self._clean_link(text=raw_content)
-        content = raw_content.plain_text(
-            replace_templates=self._template_handler,
-            replace_wikilinks=True,
-            replace_tags=False,
+        items: list[list[str]] = []
+        remove_titles = []
+        for title in list_titles:
+            value = values[title]
+            if value:
+                mean_char = statistics.mean(list(map(lambda x: len(re.sub(r"（[^）]+）|\([^)]+\)", "", x)), value)))
+                if mean_char < self.max_list_mean_char:
+                    value.append("llm invoke")
+                    items.append(value)
+                else:
+                    items.append(value)
+            else:
+                remove_titles.append(title)
+        for remove_title in remove_titles:
+            list_titles.remove(remove_title)
+        return list_titles, items
+
+    def _add_list_to_block(self, doc: bs4.Tag, page: WikiPage, current_title: str, list_title: str, items: list[str]):
+        if list_title:
+            self._add_block(
+                doc=doc,
+                page=page,
+                current_title=current_title,
+                block_type="list-title",
+                content=list_title,
+            )
+        self._add_block(
+            doc=doc,
+            page=page,
+            current_title=current_title,
+            block_type="list-item",
+            content="\n".join(items),
         )
-        content = self._clean_by_pattern(text=content)
-        content = self._convert_list(text=content)
-        self.get_list_blocks_indices(content)
-        content = self._convert_definition_term(text=content)
-        content = "\n".join([line.rstrip() for line in content.split("\n")])
-        return content.strip().replace("\n\t\n", "\n\n").replace("\n\n\n", "\n\n").replace("{{col|", "")
-
-    def _template_handler(self, template: wtp._template.Template):
-        template_name = template.name
-        if template_name in ["zy", "link-ja", "col"]:
-            print("sss", template.arguments)
-            if len(template.arguments) > 0:
-                return wtp.parse(template.arguments[0].value).plain_text()
-        elif template_name == "bd":
-            if len(template.arguments) >= 4:
-                args = template.arguments
-                return f"{wtp.parse(args[0].value).plain_text()}{wtp.parse(args[1].value).plain_text()}-{wtp.parse(args[2].value).plain_text()}{wtp.parse(args[3].value).plain_text()}"
-        elif template_name in ["columns-list", "col-begin", "col-end", "div col"]:
-            if len(template.arguments) > 0:
-                return wtp.parse(template.arguments[-1].value).plain_text()
-        elif template_name == "tsl":
-            if len(template.arguments) > 1:
-                return template.arguments[1].value
-
-    def _convert_list(self, text: str):
-        counters = {}
-
-        def replace_line(match):
-            # group(1) 是行首的空白（如果有）
-            # group(2) 是标记符 (如 *, #, ::, *:)
-            # group(3) 是正文内容
-            markers = match.group(2)
-            content = match.group(3).strip()
-            content = re.sub(r"\s+[-–—]+\s+", "，", content)
-            level = len(markers)
-            if level > 2:
-                return ""
-
-            keys_to_del = [k for k in counters if k > level]
-            for k in keys_to_del:
-                del counters[k]
-
-            last_marker = markers[-1]
-
-            if last_marker == ":":
-                symbol = ""
-                indent = "  " * level
-            elif last_marker == "#":
-                current_count = counters.get(level, 0) + 1
-                counters[level] = current_count
-                symbol = f"{current_count}. "
-                indent = "  " * (level - 1)
-            # elif last_marker == ";":
-            #     counters[level] = 0
-            #     symbol = ""
-            #     content = f"**{content}**"
-            #     indent = "  " * (level - 1)
-            else:
-                counters[level] = 0
-                symbol = "- "
-                calc_level = level
-                if last_marker == ";" and level > 1:
-                    calc_level = level - 1
-                indent = "  " * (calc_level - 1)
-
-            return f"{indent}{symbol}{content}"
-
-        pattern = r"(?m)^(\s*)([\*\#\:\;]+)\s*(.*)$"
-
-        return re.sub(pattern, replace_line, text)
-
-    def _convert_definition_term(self, text: str):
-        """
-        处理维基百科的定义列表语法 (;术语)
-        转换为 Markdown 的加粗文本 (**术语**)
-        """
-        return re.sub(r"(?m)^;\s*(.*)$", r"**\1**", text)
-
-    def get_list_blocks_indices(self, text):
-        # 你的正则表达式
-        list_line_pattern = re.compile(r"(?m)^(\s*)([\*\#\:\;]+)\s*(.*)$")
-
-        # 1. 找到所有匹配的“行”
-        # finditer 返回的是迭代器，包含每一次匹配的 start() 和 end()
-        matches = list(list_line_pattern.finditer(text))
-
-        if not matches:
-            return []
-
-        blocks = []
-
-        # 初始化第一个块
-        current_block_start = matches[0].start()
-        current_block_end = matches[0].end()
-
-        # 2. 遍历合并相邻的行
-        for i in range(1, len(matches)):
-            prev_match = matches[i - 1]
-            curr_match = matches[i]
-
-            # 获取上一行结束 到 下一行开始 之间的内容
-            gap = text[prev_match.end() : curr_match.start()]
-
-            # 判定：如果中间只是换行符（\n 或 \r\n），说明它们是连续的列表
-            if gap.strip() == "":
-                # 延长当前块的结束位置
-                current_block_end = curr_match.end()
-            else:
-                # 否则，说明中间断开了（有空行或普通文本），保存当前块，开始新块
-                blocks.append((current_block_start, current_block_end))
-                current_block_start = curr_match.start()
-                current_block_end = curr_match.end()
-
-        # 不要忘记加入最后一个块
-        blocks.append((current_block_start, current_block_end))
-
-        return blocks
