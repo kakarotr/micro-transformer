@@ -42,7 +42,7 @@ class WikiPageParser:
 
         for child in content_doc.find_all(recursive=False):
             if child.has_attr("class") and "mw-heading" in child["class"]:
-                level, title = self._handle_title(title_tag=child, classes=child["class"])  # type: ignore
+                level, title = self._convert_title(title_tag=child, classes=child["class"])  # type: ignore
                 if current_ignore_level is not None:
                     if level > current_ignore_level:
                         continue
@@ -55,7 +55,18 @@ class WikiPageParser:
                 if title in ignore_sections or any(fuzzy in title for fuzzy in fuzzy_sections):
                     current_ignore_level = level
                     continue
-                wiki_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
+
+                # 如果下一个元素是标题, 并且level和当前元素一样
+                # 说明当前标题没有正文, 同时也不是下一个标题的父标题
+                # 则不进行记录
+                next_element = child.find_next_sibling()
+                if next_element and self._is_title(doc=next_element):
+                    next_level, _ = self._convert_title(title_tag=next_element, classes=next_element["class"])  # type: ignore
+                    if level != next_level:
+                        wiki_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
+                else:
+                    # 下一个元素不是标题, 直接记录
+                    wiki_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
             else:
                 if current_ignore_level is not None:
                     if current_level >= current_ignore_level:
@@ -70,7 +81,7 @@ class WikiPageParser:
                 # 处理表格或者列表
                 elif child.name == "table":
                     if child.has_attr("class") and "multicol" in child["class"]:
-                        list_title, items = self._handle_list(doc=child)
+                        list_title, items = self._convert_list(doc=child)
                         self._add_list_to_block(
                             doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
                         )
@@ -79,7 +90,7 @@ class WikiPageParser:
 
                 # 处理列表
                 elif child.name == "ul":
-                    list_title, items = self._handle_list(doc=child)
+                    list_title, items = self._convert_list(doc=child)
                     self._add_list_to_block(
                         doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
                     )
@@ -87,13 +98,13 @@ class WikiPageParser:
                 # 处理列表
                 elif child.name == "div":
                     list = child.find("table", class_="multicol", recursive=False)
-                    list_title, items = self._handle_list(list)
+                    list_title, items = self._convert_list(list)
                     self._add_list_to_block(
                         doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
                     )
 
                     list = child.find("ul", recursive=False)
-                    list_title, items = self._handle_list(list)
+                    list_title, items = self._convert_list(list)
                     self._add_list_to_block(
                         doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
                     )
@@ -103,10 +114,10 @@ class WikiPageParser:
                     if (
                         len(child.find_all(recursive=False)) > 1
                         and child.find_all("dt", recursive=False)
-                        and child.find("dd", recursive=False)
+                        and child.find_all("dd", recursive=False)
                     ):
-                        list_titles, items = self._handle_dl(doc=child)
-                        for idx, title in enumerate(list_titles):
+                        list_titles, items = self._convert_dl(doc=child)
+                        for idx, list_title in enumerate(list_titles):
                             item = items[idx]
                             self._add_list_to_block(
                                 doc=child,
@@ -142,66 +153,116 @@ class WikiPageParser:
         return None
 
     def _clean_tag(self, doc: bs4.Tag):
+        """清洗标签"""
+        # 去掉a标签的格式, 保留内容
         for a_tag in doc.find_all("a"):
             a_tag.unwrap()
 
+        # 直接删除的标签
         for tag in doc.find_all(["style", "meta", "figure", "sup", "blockquote"]):
             tag.decompose()
 
+        # 删除small, 特殊处理<p><small></small></p>
         for small_tag in doc.find_all("small"):
             if small_tag.parent and small_tag.parent.name == "p":
                 small_tag.parent.decompose()
 
+        # 修改加粗标签为Markdown加粗格式
         for block_tag in doc.find_all("b"):
             block_tag.replace_with(f"**{block_tag.get_text()}**")
 
+        # 去掉标题元素内多余的元素, 只保留标题
         for title_tag in doc.find_all("div", class_="mw-heading"):
             title = title_tag.get_text(strip=True)
             title_tag.clear()
             title_tag.string = title
 
-        for tag in doc.find_all("div", class_=["thumb", "rellink", "hatnote", "side-box"]):
+        # 删除指定class的div元素
+        for tag in doc.find_all("div", class_=["thumb", "rellink", "hatnote", "side-box", "NavFrame"]):
             tag.decompose()
 
+        # 删除图片画廊
         for tag in doc.find_all(class_="gallery"):
             tag.decompose()
 
-    def _handle_title(self, title_tag: bs4.Tag, classes: list[str]):
+        # 删除没有class的div
+        for div in doc.find_all("div", recursive=False):
+            if not div.has_attr("class"):
+                div.decompose()
+
+        # 删除只有一个子元素的dl
+        for dl in doc.find_all("dl", recursive=False):
+            if len(dl.find_all(recursive=False)) == 1:
+                dl.decompose()
+
+        with open("preview/preview.html", mode="w", encoding="utf-8") as f:
+            f.write(str(doc))
+
+    def _convert_title(self, title_tag: bs4.Tag, classes: list[str]):
+        """
+        处理标题
+
+        返回标题等级和标题内容
+        """
         level = int(classes[-1][-1])
         return level, title_tag.string or ""
 
     def _find_title(self, tag: bs4.Tag):
+        """
+        查询当前元素的标题
+
+        以当前元素为锚点, 向上查询有指定class的元素
+        """
         for prev_sibling in tag.find_previous_siblings():
             if prev_sibling.has_attr("class") and "mw-heading" in prev_sibling["class"]:
                 return prev_sibling.string or ""
         return ""
 
-    def _compute_list_mean_char(self, doc: bs4.Tag, is_table: bool = False):
+    def _compute_list_mean_char(self, texts: list[str], is_table: bool = False):
+        """
+        计算ListItem字符的平均长度
+
+        超过了指定长度就是用LLM对列表进行语义化重写
+        """
         total = 0
         count = 0
-        for li in doc.find_all("li"):
+        for text in texts:
             count += 1
-            text = re.sub(r"（[^）]+）|\([^)]+\)", "", li.get_text(strip=True))
-            total += len(text)
+            # 去除"()"的内容, 不计入字符数量
+            text = re.sub(r"（[^）]+）|\([^)]+\)", "", text)
+            # 对内容进行分割, 避免特殊的分隔符影响长度计算
+            total += statistics.mean(list(map(lambda x: len(x), re.split(r"[、,-]", text))))
         return total // count if count != 0 else 0
 
-    def _handle_list(self, doc: bs4.Tag | None):
+    def _convert_list(self, doc: bs4.Tag | None):
+        """
+        转换List(HTML的ul元素)
+
+        大部分ul元素没有list title, 可能部分Section有使用dl作为title
+        """
         items = []
         list_title = ""
         if doc:
-            mean_char = self._compute_list_mean_char(doc=doc, is_table=True)
+            texts = [li.get_text(strip=True) for li in doc.find_all("li")]
+            mean_char = self._compute_list_mean_char(texts=texts, is_table=True)
             prev_tag = doc.find_previous_sibling()
+            # 提取可能的title
             if prev_tag and prev_tag.name == "dl":
                 list_title = prev_tag.get_text(strip=True)
 
             if mean_char < self.max_list_mean_char:
+                # 小于指定长度使用LLM改写
                 items = [li.get_text(strip=True) for li in doc.find_all("li")]
                 items.append("llm invoke")
             else:
+                # 大于指定长度直接作为训练语料
                 items = [li.get_text(strip=True) for li in doc.find_all("li")]
         return list_title, items
 
     def _add_block(self, doc: bs4.Tag, page: WikiPage, current_title: str, block_type: BlockType, content: str):
+        """
+        添加Block
+        """
         if current_title == self._find_title(tag=doc):
             last_section = page.sections[-1]
             if last_section.blocks and last_section.blocks[-1].type == block_type:
@@ -212,7 +273,18 @@ class WikiPageParser:
         else:
             page.sections[-1].blocks.append(SectionBlock(type=block_type, content=content))
 
-    def _handle_dl(self, doc: bs4.Tag):
+    def _convert_dl(self, doc: bs4.Tag):
+        """
+        处理dl元素
+
+        仅处理下面的结构, 其中dt作为title
+        <dl>
+          <dt></dt>
+          <dd></dd>
+          <dt></dt>
+          <dd></dd>
+        </dl>
+        """
         list_titles: list[str] = []
         values: dict[str, list[str]] = defaultdict(list)
         current_title = ""
@@ -229,7 +301,7 @@ class WikiPageParser:
         for title in list_titles:
             value = values[title]
             if value:
-                mean_char = statistics.mean(list(map(lambda x: len(re.sub(r"（[^）]+）|\([^)]+\)", "", x)), value)))
+                mean_char = self._compute_list_mean_char(texts=value)
                 if mean_char < self.max_list_mean_char:
                     value.append("llm invoke")
                     items.append(value)
@@ -257,3 +329,6 @@ class WikiPageParser:
             block_type="list-item",
             content="\n".join(items),
         )
+
+    def _is_title(self, doc: bs4.Tag):
+        return doc.has_attr("class") and "mw-heading" in doc["class"]

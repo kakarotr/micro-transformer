@@ -11,7 +11,7 @@ if __name__ == "__main__":
     parser = WikiPageParser()
     wiki_page = parser.parse(title="豊臣秀吉", lang="ja")
     if wiki_page:
-        with open("preview/preivew.json", mode="w", encoding="utf-8") as f:
-            f.write(wiki_page.model_dump_json())
-        with open("preview/preivew.md", mode="w", encoding="utf-8") as f:
+        with open("preview/preview.json", mode="w", encoding="utf-8") as f:
+            f.write(wiki_page.model_dump_json(indent=2))
+        with open("preview/preview.md", mode="w", encoding="utf-8") as f:
             f.write(wiki_page.merge_sections())
