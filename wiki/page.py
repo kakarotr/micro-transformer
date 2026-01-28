@@ -101,11 +101,25 @@ class WikiPageParser:
                         )
                         continue
                     if child.has_attr("class") and "wikitable" in child["class"]:
+                        tbody = [tr.get_text(separator="||", strip=True) for tr in child.find_all("tr")]
                         # 数据表格
-                        pass
+                        self._add_block(
+                            doc=child,
+                            page=wiki_page,
+                            current_title=current_title,
+                            block_type="table",
+                            content=tbody,
+                        )
 
                 # 处理列表
                 elif child.name == "ul":
+                    list_title, items = self._convert_list(doc=child)
+                    self._add_list_to_block(
+                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                    )
+
+                # 处理有序列表
+                elif child.name == "ol":
                     list_title, items = self._convert_list(doc=child)
                     self._add_list_to_block(
                         doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
@@ -239,7 +253,9 @@ class WikiPageParser:
                             if len(dds) > 1:
                                 # 内容
                                 for dd in dds[1:]:
-                                    new_dd = root.new_tag("dd", string=next(dd.stripped_strings))
+                                    for ul in dd.find_all("ul"):
+                                        ul.decompose()
+                                    new_dd = root.new_tag("dd", string=dd.get_text(strip=True))
                                     merged_dl.append(new_dd)
                             continue
                         if dl.find_all("ol"):
@@ -251,7 +267,9 @@ class WikiPageParser:
                                 continue
                         for dd in dl.find_all("dd"):
                             # 列表项
-                            new_dd = root.new_tag("dd", string=next(dd.stripped_strings))
+                            for ul in dd.find_all("ul"):
+                                ul.decompose()
+                            new_dd = root.new_tag("dd", string=dd.get_text(strip=True))
                             merged_dl.append(new_dd)
                     consecutive_dls[0].insert_before(merged_dl)
 
@@ -328,19 +346,36 @@ class WikiPageParser:
                 items = [li.get_text(strip=True) for li in doc.find_all("li")]
         return list_title, items
 
-    def _add_block(self, doc: bs4.Tag, page: WikiPage, current_title: str, block_type: BlockType, content: str):
+    def _add_block(
+        self,
+        doc: bs4.Tag,
+        page: WikiPage,
+        current_title: str,
+        block_type: BlockType,
+        content: str | list,
+        list_title: str | None = None,
+    ):
         """
         添加Block
         """
         if current_title == self._find_title(tag=doc):
+            # 当前添加的Block归属的条目已经添加过
+            # 判断当前Block和最后一个Block的类型是否一致
+            # 一致则在上一个Block的内容后面最后进行追加当前Block的内容
             last_section = page.sections[-1]
             if last_section.blocks and last_section.blocks[-1].type == block_type:
-                block_content = last_section.blocks[-1].content
-                last_section.blocks[-1].content = f"{block_content}\n\n{content}"
+                block_content: str | list[str] = last_section.blocks[-1].content
+                if block_content:
+                    if isinstance(content, str):
+                        last_section.blocks[-1].content = f"{block_content}\n\n{content}"
+                    else:
+                        last_section.blocks[-1].content = block_content + content  # type: ignore
+                else:
+                    last_section.blocks[-1].content = content
             else:
-                last_section.blocks.append(SectionBlock(type=block_type, content=content))
+                last_section.blocks.append(SectionBlock(type=block_type, content=content, list_title=list_title))
         else:
-            page.sections[-1].blocks.append(SectionBlock(type=block_type, content=content))
+            page.sections[-1].blocks.append(SectionBlock(type=block_type, content=content, list_title=list_title))
 
     def _convert_standard_dl(self, doc: bs4.Tag):
         """
@@ -402,21 +437,22 @@ class WikiPageParser:
             items.append("llm invoke")
         return title, items
 
-    def _add_list_to_block(self, doc: bs4.Tag, page: WikiPage, current_title: str, list_title: str, items: list[str]):
-        if list_title:
-            self._add_block(
-                doc=doc,
-                page=page,
-                current_title=current_title,
-                block_type="list-title",
-                content=list_title,
-            )
+    def _add_list_to_block(
+        self,
+        doc: bs4.Tag,
+        page: WikiPage,
+        current_title: str,
+        list_title: str,
+        items: list[str],
+        is_order: bool = False,
+    ):
         self._add_block(
             doc=doc,
             page=page,
             current_title=current_title,
-            block_type="list-item",
-            content="\n".join(items),
+            block_type="olist" if is_order else "ulist",
+            content=items,
+            list_title=list_title,
         )
 
     def _is_title(self, doc: bs4.Tag):
