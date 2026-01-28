@@ -30,14 +30,15 @@ class WikiPage(BaseModel):
         for section in self.sections:
             title = section.title
             if title == "summary":
-                contents.append(f"{self._merge_blocks(blocks=section.blocks)}")
+                contents.append(self._merge_blocks(blocks=section.blocks))
             else:
                 content = self._merge_blocks(blocks=section.blocks)
-                contents.append(f"{'#' * section.level} {title}")
                 if content:
-                    contents.append("\n")
-                    contents.append(f"{content}")
-        return "\n".join(contents)
+                    contents.append(f"{'#' * section.level} {title}\n{content}")
+                else:
+                    contents.append(f"{'#' * section.level} {title}")
+
+        return "\n\n".join(contents)
 
     def _merge_blocks(self, blocks: list[SectionBlock]):
         contents = []

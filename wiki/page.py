@@ -228,7 +228,7 @@ class WikiPageParser:
 
         # 删除没有class但是有style的的div
         for div in doc.find_all("div", recursive=False):
-            if not div.has_attr("class") and div.has_attr("style"):
+            if not div.has_attr("class") and div.has_attr("style") and len(div.find_all("ul", recursive=False)) == 0:
                 div.decompose()
 
         # 删除无效的表格
