@@ -20,7 +20,7 @@ if __name__ == "__main__":
     ]
     # # 織田信長
     parser = WikiPageParser()
-    wiki_page = parser.parse(title="関ヶ原の戦い", lang="ja")
+    wiki_page = parser.parse(title="大坂の陣", lang="ja")
     if wiki_page:
         with open("preview/preview.json", mode="w", encoding="utf-8") as f:
             f.write(wiki_page.model_dump_json(indent=2))
