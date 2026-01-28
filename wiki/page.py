@@ -1,3 +1,4 @@
+import itertools
 import os
 import re
 import statistics
@@ -23,6 +24,8 @@ class WikiPageParser:
         content_doc = self._get_html_doc(title=title, lang=lang)
         if not content_doc:
             return None
+        with open("preview/preview.html", mode="w", encoding="utf-8") as f:
+            f.write(content_doc.prettify())
         wiki_page = WikiPage(title=title, category_name="", lang=lang, sections=[], full_content="")
 
         # 处理摘要
@@ -85,7 +88,20 @@ class WikiPageParser:
                         self._add_list_to_block(
                             doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
                         )
-                    else:
+                        continue
+                    if len(child.find_all("tr")) == 1:
+                        # 只有一个tr按列表处理
+                        list_title, items = self._convert_list(doc=child)
+                        self._add_list_to_block(
+                            doc=child,
+                            page=wiki_page,
+                            current_title=current_title,
+                            list_title=list_title,
+                            items=items,
+                        )
+                        continue
+                    if child.has_attr("class") and "wikitable" in child["class"]:
+                        # 数据表格
                         pass
 
                 # 处理列表
@@ -111,21 +127,31 @@ class WikiPageParser:
 
                 # 处理描述列表
                 elif child.name == "dl":
-                    if (
-                        len(child.find_all(recursive=False)) > 1
-                        and child.find_all("dt", recursive=False)
-                        and child.find_all("dd", recursive=False)
-                    ):
-                        list_titles, items = self._convert_dl(doc=child)
-                        for idx, list_title in enumerate(list_titles):
-                            item = items[idx]
+                    if len(child.find_all(recursive=False)) > 1:
+                        if child.find_all("dt", recursive=False) and child.find_all("dd", recursive=False):
+                            list_titles, items = self._convert_standard_dl(doc=child)
+                            for idx, list_title in enumerate(list_titles):
+                                item = items[idx]
+                                self._add_list_to_block(
+                                    doc=child,
+                                    page=wiki_page,
+                                    current_title=current_title,
+                                    list_title=list_title,
+                                    items=item,
+                                )
+                            continue
+                        if len(child.find_all("dd")) > 1:
+                            list_title, items = self._convert_two_dd_list(doc=child)
                             self._add_list_to_block(
                                 doc=child,
                                 page=wiki_page,
                                 current_title=current_title,
                                 list_title=list_title,
-                                items=item,
+                                items=items,
                             )
+                # elif child.name == "blockquote":
+                #     if child.find_all("dl") and len(child.find_all("dd")) > 0:
+                #         list_title, items = self._convert_standard_dl(doc=)
         return wiki_page
 
     def _get_html_doc(self, title: str, lang: str):
@@ -148,11 +174,12 @@ class WikiPageParser:
             soup = BeautifulSoup(html_content, "html.parser")
             content_doc = soup.find()
             if content_doc:
-                self._clean_tag(doc=content_doc)
+                self._clean_tag(root=soup, doc=content_doc)
+                self._special_process(root=soup, doc=content_doc, title=title)
                 return content_doc
         return None
 
-    def _clean_tag(self, doc: bs4.Tag):
+    def _clean_tag(self, root: bs4.BeautifulSoup, doc: bs4.Tag):
         """清洗标签"""
         # 去掉a标签的格式, 保留内容
         for a_tag in doc.find_all("a"):
@@ -190,13 +217,51 @@ class WikiPageParser:
             if not div.has_attr("class") and div.has_attr("style"):
                 div.decompose()
 
+        # 删除无效的表格
+        for table in doc.find_all("table", class_=re.compile(r"^box-")):
+            table.decompose()
+
+        # 合并连续的dl
+        children = [child for child in doc.find_all(recursive=False)]
+        for key, group in itertools.groupby(children, key=lambda x: x.name):
+            if key == "dl":
+                consecutive_dls = list(group)
+                if len(consecutive_dls) > 3:
+                    merged_dl = root.new_tag("dl", attrs={"class": "merged-dl"})
+                    for dl in consecutive_dls:
+                        if dl.find_all("ul"):
+                            # 标题项
+                            dds = dl.find_all("dd", recursive=False)
+                            if dds:
+                                # 标题
+                                new_dt = root.new_tag("dt", string=dds[0].get_text(strip=True))
+                                merged_dl.append(new_dt)
+                            if len(dds) > 1:
+                                # 内容
+                                for dd in dds[1:]:
+                                    new_dd = root.new_tag("dd", string=next(dd.stripped_strings))
+                                    merged_dl.append(new_dd)
+                            continue
+                        if dl.find_all("ol"):
+                            ol = dl.select_one("ol")
+                            if ol:
+                                for li in ol.find_all("li"):
+                                    new_dd = root.new_tag("dd", string=li.get_text(strip=True))
+                                    merged_dl.append(new_dd)
+                                continue
+                        for dd in dl.find_all("dd"):
+                            # 列表项
+                            new_dd = root.new_tag("dd", string=next(dd.stripped_strings))
+                            merged_dl.append(new_dd)
+                    consecutive_dls[0].insert_before(merged_dl)
+
+                    for dl in consecutive_dls:
+                        dl.decompose()
+
         # 删除只有一个子元素的dl
         for dl in doc.find_all("dl", recursive=False):
             if len(dl.find_all(recursive=False)) == 1:
                 dl.decompose()
-
-        with open("preview/preview.html", mode="w", encoding="utf-8") as f:
-            f.write(str(doc))
 
     def _convert_title(self, title_tag: bs4.Tag, classes: list[str]):
         """
@@ -205,7 +270,11 @@ class WikiPageParser:
         返回标题等级和标题内容
         """
         level = int(classes[-1][-1])
-        return level, title_tag.string or ""
+        title = title_tag.get_text(strip=True)
+        title = re.sub(
+            r"^[\(\（]?(?:[0-9]+|[IVXLCDMivxlcdm]+|[一二三四五六七八九十百千万]+)[\)\）\.、\s\-]*", "", title
+        )
+        return level, title
 
     def _find_title(self, tag: bs4.Tag):
         """
@@ -273,7 +342,7 @@ class WikiPageParser:
         else:
             page.sections[-1].blocks.append(SectionBlock(type=block_type, content=content))
 
-    def _convert_dl(self, doc: bs4.Tag):
+    def _convert_standard_dl(self, doc: bs4.Tag):
         """
         处理dl元素
 
@@ -313,6 +382,26 @@ class WikiPageParser:
             list_titles.remove(remove_title)
         return list_titles, items
 
+    def _convert_two_dd_list(self, doc: bs4.Tag):
+        """
+        处理多dd的列表, 第一个dd是按标题处理
+
+        结构:
+
+        """
+        title = ""
+        items = []
+        for idx, dd in enumerate(doc.find_all("dd", recursive=False)):
+            text = dd.get_text(strip=True)
+            if idx == 0:
+                title = text
+                continue
+            items.append(text)
+        mean_char = self._compute_list_mean_char(texts=items)
+        if mean_char < self.max_list_mean_char:
+            items.append("llm invoke")
+        return title, items
+
     def _add_list_to_block(self, doc: bs4.Tag, page: WikiPage, current_title: str, list_title: str, items: list[str]):
         if list_title:
             self._add_block(
@@ -332,3 +421,10 @@ class WikiPageParser:
 
     def _is_title(self, doc: bs4.Tag):
         return doc.has_attr("class") and "mw-heading" in doc["class"]
+
+    def _special_process(self, root: bs4.BeautifulSoup, doc: bs4.Tag, title: str):
+        """针对指定页面的特殊处理"""
+        if title == "本能寺の変":
+            for dd in doc.find_all("dd"):
+                if dd.get_text(strip=True) == "光秀・秀吉・家康の三者が共謀して信長を暗殺したという説の総称。":
+                    dd.insert_after(root.new_tag("dt", string="土岐明智家滅亡阻止説"))
