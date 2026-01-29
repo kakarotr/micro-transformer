@@ -127,7 +127,12 @@ class WikiPageParser:
                 elif child.name == "ol":
                     list_title, items = self._convert_list(doc=child)
                     self._add_list_to_block(
-                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                        doc=child,
+                        page=wiki_page,
+                        current_title=current_title,
+                        list_title=list_title,
+                        items=items,
+                        is_order=True,
                     )
 
                 # 处理列表
@@ -142,6 +147,17 @@ class WikiPageParser:
                     list_title, items = self._convert_list(list)
                     self._add_list_to_block(
                         doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
+                    )
+
+                    list = child.find("ol", recursive=False)
+                    list_title, items = self._convert_list(list)
+                    self._add_list_to_block(
+                        doc=child,
+                        page=wiki_page,
+                        current_title=current_title,
+                        list_title=list_title,
+                        items=items,
+                        is_order=True,
                     )
 
                 # 处理描述列表
@@ -561,4 +577,4 @@ class WikiPageParser:
         )
         result = response.choices[0].message.content
         assert result is not None
-        return WikiTableSchema.model_validate_json(result).lines
+        return WikiTableSchema.model_validate_json(result)
