@@ -1,4 +1,5 @@
 import itertools
+import json
 import os
 import re
 import statistics
@@ -10,6 +11,8 @@ from bs4 import BeautifulSoup
 from openai import OpenAI
 
 from utils.db import get_db_conn
+from utils.prompt import wiki_list_prompt, wiki_table_prompt
+from utils.schemas import WikiListSchema, WikiTableSchema
 from wiki.data import fuzzy_sections, ignore_sections
 from wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
 
@@ -18,13 +21,14 @@ class WikiPageParser:
     def __init__(self) -> None:
         self.max_list_mean_char = 10
         self.conn = get_db_conn()
-        self.llm_client = OpenAI(base_url=os.environ["DEEPSEEK_URL"], api_key=os.environ["DEEPSEEK_KEY"])
+        self.llm_name = os.environ["LLM_NAME"]
+        self.llm_client = OpenAI(base_url=os.environ["LLM_URL"], api_key=os.environ["LLM_KEY"])
 
     def parse(self, title: str, lang: str = "zh"):
         content_doc = self._get_html_doc(title=title, lang=lang)
         if not content_doc:
             return None
-        with open("preview/preview.html", mode="w", encoding="utf-8") as f:
+        with open(f"preview/{title}.html", mode="w", encoding="utf-8") as f:
             f.write(content_doc.prettify())
         wiki_page = WikiPage(title=title, category_name="", lang=lang, sections=[], full_content="")
 
@@ -68,7 +72,6 @@ class WikiPageParser:
                     if level != next_level:
                         wiki_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
                 else:
-                    # 下一个元素不是标题, 直接记录
                     wiki_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
             else:
                 if current_ignore_level is not None:
@@ -77,6 +80,8 @@ class WikiPageParser:
                 # 处理段落
                 if child.name == "p":
                     content = child.get_text(strip=True)
+                    if "旧暦" in content and "日付" in content:
+                        continue
                     self._add_block(
                         doc=child, page=wiki_page, current_title=current_title, block_type="text", content=content
                     )
@@ -163,9 +168,6 @@ class WikiPageParser:
                                 list_title=list_title,
                                 items=items,
                             )
-                # elif child.name == "blockquote":
-                #     if child.find_all("dl") and len(child.find_all("dd")) > 0:
-                #         list_title, items = self._convert_standard_dl(doc=)
         return wiki_page
 
     def _get_html_doc(self, title: str, lang: str):
@@ -200,7 +202,7 @@ class WikiPageParser:
             a_tag.unwrap()
 
         # 直接删除的标签
-        for tag in doc.find_all(["style", "meta", "figure", "sup", "blockquote"]):
+        for tag in doc.find_all(["link", "style", "meta", "figure", "sup", "blockquote"]):
             tag.decompose()
 
         # 删除small, 特殊处理<p><small></small></p>
@@ -276,10 +278,16 @@ class WikiPageParser:
                     for dl in consecutive_dls:
                         dl.decompose()
 
-        # 删除只有一个子元素的dl
+        # 处理只有一个子元素的dl
         for dl in doc.find_all("dl", recursive=False):
             if len(dl.find_all(recursive=False)) == 1:
-                dl.decompose()
+                dl_child_tag = dl.find().name  # type: ignore
+                if dl_child_tag == "dd":
+                    # 部分页面段落在<dl><dd></dd></dl>内
+                    text = dl.get_text(strip=True)
+                    dl.name = "p"
+                    dl.clear()
+                    dl.string = text
 
     def _convert_title(self, title_tag: bs4.Tag, classes: list[str]):
         """
@@ -289,9 +297,7 @@ class WikiPageParser:
         """
         level = int(classes[-1][-1])
         title = title_tag.get_text(strip=True)
-        title = re.sub(
-            r"^[\(\（]?(?:[0-9]+|[IVXLCDMivxlcdm]+|[一二三四五六七八九十百千万]+)[\)\）\.、\s\-]*", "", title
-        )
+        title = re.sub(r"^[\(\（]?(?:[0-9]+|[IVXLCDMivxlcdm]+)[\)\）\.、\s\-]*", "", title)
         return level, title
 
     def _find_title(self, tag: bs4.Tag):
@@ -334,8 +340,13 @@ class WikiPageParser:
             mean_char = self._compute_list_mean_char(texts=texts, is_table=True)
             prev_tag = doc.find_previous_sibling()
             # 提取可能的title
-            if prev_tag and prev_tag.name == "dl":
-                list_title = prev_tag.get_text(strip=True)
+            if prev_tag:
+                if prev_tag.name == "dl":
+                    list_title = prev_tag.get_text(strip=True)
+            elif doc.parent:
+                prev = doc.parent.find_previous_sibling()
+                if prev and prev.name == "dl":
+                    list_title = prev.get_text(strip=True)
 
             if mean_char < self.max_list_mean_char:
                 # 小于指定长度使用LLM改写
@@ -369,9 +380,11 @@ class WikiPageParser:
                     if isinstance(content, str):
                         last_section.blocks[-1].content = f"{block_content}\n\n{content}"
                     else:
-                        last_section.blocks[-1].content = block_content + content  # type: ignore
+                        last_section.blocks.append(
+                            SectionBlock(type=block_type, content=content, list_title=list_title)
+                        )
                 else:
-                    last_section.blocks[-1].content = content
+                    last_section.blocks[-1] = SectionBlock(type=block_type, content=content, list_title=list_title)
             else:
                 last_section.blocks.append(SectionBlock(type=block_type, content=content, list_title=list_title))
         else:
@@ -464,3 +477,88 @@ class WikiPageParser:
             for dd in doc.find_all("dd"):
                 if dd.get_text(strip=True) == "光秀・秀吉・家康の三者が共謀して信長を暗殺したという説の総称。":
                     dd.insert_after(root.new_tag("dt", string="土岐明智家滅亡阻止説"))
+            for div in doc.find_all("div"):
+                if div.get_text(strip=True) == "討死、自害した人物":
+                    new_ul = root.new_tag("ul")
+                    nexts = div.find_next_siblings(limit=5)
+                    for item in nexts[1:]:
+                        for li in item.find_all("li"):
+                            new_ul.append(li)
+                        item.decompose()
+                    nexts[0].insert_after(new_ul)
+            for caption in doc.find_all("caption"):
+                if caption.get_text(strip=True).startswith("本能寺の変の真相をめぐる諸説"):
+                    if caption.parent and caption.parent.name == "table":
+                        next = caption.parent.find_next_sibling()
+                        next.decompose()  # type: ignore
+                        caption.parent.decompose()
+
+        if title == "方広寺鐘銘事件":
+            for p in doc.find_all("p", recursive=False):
+                if (
+                    p.get_text(strip=True)
+                    == "通説では、崇伝が鐘銘事件へ深く関与したとされるが、当時の一次史料からはそれは窺えない。ただし、崇伝も取り調べには加わっており、東福寺住持は清韓の救援を崇伝へ依頼したが断られている。"
+                ):
+                    p.decompose()
+
+        if title == "織田信長":
+            for ul in doc.find_all("ul", recursive=False):
+                lis = ul.find_all("li")
+                if len(lis) == 2:
+                    text = lis[1].get_text(strip=True)
+                    if text == "側室":
+                        dl = root.new_tag("dl", string=text)
+                        ul.insert_after(dl)
+                        lis[1].decompose()
+
+    def _rewrite_list(
+        self,
+        page_title: str,
+        section_title: str,
+        content: str,
+        list_title: str | None = None,
+    ):
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_name,
+            messages=[
+                {
+                    "role": "system",
+                    "content": wiki_list_prompt.format(
+                        json_schema=json.dumps(WikiListSchema.model_json_schema(), ensure_ascii=False),
+                        page_title=page_title,
+                        section_title=section_title,
+                        list_title=list_title,
+                    ),
+                },
+                {"role": "user", "content": content},
+            ],
+            response_format={"type": "json_object"},
+        )
+        result = response.choices[0].message.content
+        assert result is not None
+        return WikiListSchema.model_validate_json(result).items
+
+    def _rewrite_table(
+        self,
+        page_title: str,
+        section_title: str,
+        content: str,
+    ):
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_name,
+            messages=[
+                {
+                    "role": "system",
+                    "content": wiki_table_prompt.format(
+                        json_schema=json.dumps(WikiTableSchema.model_json_schema(), ensure_ascii=False),
+                        page_title=page_title,
+                        section_title=section_title,
+                    ),
+                },
+                {"role": "user", "content": content},
+            ],
+            response_format={"type": "json_object"},
+        )
+        result = response.choices[0].message.content
+        assert result is not None
+        return WikiTableSchema.model_validate_json(result).lines

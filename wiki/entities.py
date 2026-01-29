@@ -60,5 +60,6 @@ class WikiPage(BaseModel):
                         if list_title:
                             content = f"{list_title}\n"
                         content += f"{'\n'.join(list_items)}"
+                        contents.append(content)
 
         return "\n\n".join(contents)

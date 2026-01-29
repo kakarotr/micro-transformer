@@ -20,9 +20,10 @@ if __name__ == "__main__":
     ]
     # # 織田信長
     parser = WikiPageParser()
-    wiki_page = parser.parse(title="本能寺の変", lang="ja")
+    title = "本能寺の変"
+    wiki_page = parser.parse(title=title, lang="ja")
     if wiki_page:
-        with open("preview/preview.json", mode="w", encoding="utf-8") as f:
+        with open(f"preview/{title}.json", mode="w", encoding="utf-8") as f:
             f.write(wiki_page.model_dump_json(indent=2))
-        with open("preview/preview.md", mode="w", encoding="utf-8") as f:
+        with open(f"preview/{title}.md", mode="w", encoding="utf-8") as f:
             f.write(wiki_page.merge_sections())
