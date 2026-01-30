@@ -3,7 +3,8 @@ import json
 import os
 import re
 import statistics
-from collections import defaultdict
+import threading
+from dataclasses import dataclass, field
 
 import bs4
 import requests
@@ -17,23 +18,46 @@ from wiki.data import fuzzy_sections, ignore_sections
 from wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
 
 
+@dataclass
+class ListConvertResult:
+    list_title: str = field(default="")
+    need_rewrite: bool = field(default=False)
+    items: list[str] = field(default_factory=list)
+    doc: bs4.Tag = field(default_factory=lambda: BeautifulSoup("", "html.parser").new_tag("dl"))
+
+
 class WikiPageParser:
     def __init__(self) -> None:
         self.max_list_mean_char = 10
-        self.conn = get_db_conn()
         self.llm_name = os.environ["LLM_NAME"]
         self.llm_client = OpenAI(base_url=os.environ["LLM_URL"], api_key=os.environ["LLM_KEY"])
 
-    def parse(self, title: str, lang: str = "zh"):
-        content_doc = self._get_html_doc(title=title, lang=lang)
+    def parse(self, page_title: str, lang: str = "zh", debug: bool = False):
+        content_doc = self._get_html_doc(title=page_title, lang=lang)
         if not content_doc:
             return None
-        with open(f"preview/{title}.html", mode="w", encoding="utf-8") as f:
-            f.write(content_doc.prettify())
-        wiki_page = WikiPage(title=title, category_name="", lang=lang, sections=[], full_content="")
+        if debug:
+            with open(f"preview/{page_title}.html", mode="w", encoding="utf-8") as f:
+                f.write(content_doc.prettify())
+        wiki_page = WikiPage(title=page_title, category_name="", lang=lang, sections=[], full_content="")
 
         # 处理摘要
         marker = content_doc.select_one("div.mw-heading")
+        if not marker:
+            # 没有找到标题, 说明当前页面只有一份摘要
+            wiki_page.sections.append(
+                WikiSection(
+                    title="summary",
+                    level=2,
+                    blocks=[
+                        SectionBlock(
+                            type="text",
+                            content="\n\n".join([p.get_text(strip=True) for p in content_doc.find_all("p")]),
+                        )
+                    ],
+                )
+            )
+            return wiki_page
         if marker:
             contents = []
             for p_tag in marker.find_previous_siblings("p"):
@@ -60,6 +84,9 @@ class WikiPageParser:
                 current_title = title
 
                 if title in ignore_sections or any(fuzzy in title for fuzzy in fuzzy_sections):
+                    current_ignore_level = level
+                    continue
+                if page_title == "徳川家康" and title == "人物・逸話":
                     current_ignore_level = level
                     continue
 
@@ -89,100 +116,124 @@ class WikiPageParser:
                 # 处理表格或者列表
                 elif child.name == "table":
                     if child.has_attr("class") and "multicol" in child["class"]:
-                        list_title, items = self._convert_list(doc=child)
-                        self._add_list_to_block(
-                            doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
-                        )
+                        results = self._convert_list(doc=child)
+                        for result in results:
+                            self._add_list_to_block(
+                                doc=child,
+                                page=wiki_page,
+                                current_title=current_title,
+                                list_title=result.list_title,
+                                content=result.doc if result.need_rewrite else result.items,
+                            )
                         continue
                     if len(child.find_all("tr")) == 1:
                         # 只有一个tr按列表处理
-                        list_title, items = self._convert_list(doc=child)
-                        self._add_list_to_block(
-                            doc=child,
-                            page=wiki_page,
-                            current_title=current_title,
-                            list_title=list_title,
-                            items=items,
-                        )
+                        results = self._convert_list(doc=child)
+                        for result in results:
+                            self._add_list_to_block(
+                                doc=child,
+                                page=wiki_page,
+                                current_title=current_title,
+                                list_title=result.list_title,
+                                content=result.doc if result.need_rewrite else result.items,
+                            )
                         continue
                     if child.has_attr("class") and "wikitable" in child["class"]:
-                        tbody = [tr.get_text(separator="||", strip=True) for tr in child.find_all("tr")]
                         # 数据表格
                         self._add_block(
                             doc=child,
                             page=wiki_page,
                             current_title=current_title,
                             block_type="table",
-                            content=tbody,
+                            content=re.sub(r">\s+<", "><", str(child)).replace("\n", ""),
                         )
 
                 # 处理列表
                 elif child.name == "ul":
-                    list_title, items = self._convert_list(doc=child)
-                    self._add_list_to_block(
-                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
-                    )
+                    results = self._convert_list(doc=child)
+                    for result in results:
+                        self._add_list_to_block(
+                            doc=child,
+                            page=wiki_page,
+                            current_title=current_title,
+                            list_title=result.list_title,
+                            content=result.doc if result.need_rewrite else result.items,
+                        )
 
                 # 处理有序列表
                 elif child.name == "ol":
-                    list_title, items = self._convert_list(doc=child)
-                    self._add_list_to_block(
-                        doc=child,
-                        page=wiki_page,
-                        current_title=current_title,
-                        list_title=list_title,
-                        items=items,
-                        is_order=True,
-                    )
+                    results = self._convert_list(doc=child)
+                    for result in results:
+                        self._add_list_to_block(
+                            doc=child,
+                            page=wiki_page,
+                            current_title=current_title,
+                            list_title=result.list_title,
+                            content=result.doc if result.need_rewrite else result.items,
+                            is_order=True,
+                        )
 
                 # 处理列表
                 elif child.name == "div":
                     list = child.find("table", class_="multicol", recursive=False)
-                    list_title, items = self._convert_list(list)
-                    self._add_list_to_block(
-                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
-                    )
+                    if list:
+                        results = self._convert_list(doc=list)
+                        for result in results:
+                            self._add_list_to_block(
+                                doc=child,
+                                page=wiki_page,
+                                current_title=current_title,
+                                list_title=result.list_title,
+                                content=result.doc if result.need_rewrite else result.items,
+                            )
 
                     list = child.find("ul", recursive=False)
-                    list_title, items = self._convert_list(list)
-                    self._add_list_to_block(
-                        doc=child, page=wiki_page, current_title=current_title, list_title=list_title, items=items
-                    )
+                    if list:
+                        results = self._convert_list(doc=list)
+                        for result in results:
+                            self._add_list_to_block(
+                                doc=child,
+                                page=wiki_page,
+                                current_title=current_title,
+                                list_title=result.list_title,
+                                content=result.doc if result.need_rewrite else result.items,
+                            )
 
                     list = child.find("ol", recursive=False)
-                    list_title, items = self._convert_list(list)
-                    self._add_list_to_block(
-                        doc=child,
-                        page=wiki_page,
-                        current_title=current_title,
-                        list_title=list_title,
-                        items=items,
-                        is_order=True,
-                    )
+                    if list:
+                        results = self._convert_list(doc=list)
+                        for result in results:
+                            self._add_list_to_block(
+                                doc=child,
+                                page=wiki_page,
+                                current_title=current_title,
+                                list_title=result.list_title,
+                                content=result.doc if result.need_rewrite else result.items,
+                                is_order=True,
+                            )
 
                 # 处理描述列表
                 elif child.name == "dl":
                     if len(child.find_all(recursive=False)) > 1:
                         if child.find_all("dt", recursive=False) and child.find_all("dd", recursive=False):
-                            list_titles, items = self._convert_standard_dl(doc=child)
-                            for idx, list_title in enumerate(list_titles):
-                                item = items[idx]
+                            results = self._convert_standard_dl(doc=child)
+                            for result in results:
                                 self._add_list_to_block(
                                     doc=child,
                                     page=wiki_page,
                                     current_title=current_title,
-                                    list_title=list_title,
-                                    items=item,
+                                    list_title=result.list_title,
+                                    content=result.doc if result.need_rewrite else result.items,
                                 )
                             continue
                         if len(child.find_all("dd")) > 1:
-                            list_title, items = self._convert_two_dd_list(doc=child)
+                            result = self._convert_two_dd_list(doc=child)
                             self._add_list_to_block(
                                 doc=child,
                                 page=wiki_page,
                                 current_title=current_title,
-                                list_title=list_title,
-                                items=items,
+                                list_title=result.list_title,
+                                content=result.doc if result.need_rewrite else result.items,
                             )
         return wiki_page
 
@@ -200,16 +251,22 @@ class WikiPageParser:
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
             },
         )
-        data = response.json()
-        if "parse" in data:
-            html_content = data["parse"]["text"]["*"]
-            soup = BeautifulSoup(html_content, "html.parser")
-            content_doc = soup.find()
-            if content_doc:
-                self._clean_tag(root=soup, doc=content_doc)
-                self._special_process(root=soup, doc=content_doc, title=title)
-                return content_doc
-        return None
+        try:
+            response.raise_for_status()
+            data = response.json()
+            if "parse" in data:
+                html_content = data["parse"]["text"]["*"]
+                soup = BeautifulSoup(html_content, "html.parser")
+                content_doc = soup.find()
+                if content_doc:
+                    self._clean_tag(root=soup, doc=content_doc)
+                    self._special_process(root=soup, doc=content_doc, title=title)
+                    return content_doc
+            return None
+        except Exception as e:
+            tname = threading.current_thread().name
+            print(f"{tname} {title}获取百科异常 err: {e}")
+            return None
 
     def _clean_tag(self, root: bs4.BeautifulSoup, doc: bs4.Tag):
         """清洗标签"""
@@ -311,7 +368,7 @@ class WikiPageParser:
 
         返回标题等级和标题内容
         """
-        level = int(classes[-1][-1])
+        level = int(classes[1][-1])
         title = title_tag.get_text(strip=True)
         title = re.sub(r"^[\(\（]?(?:[0-9]+|[IVXLCDMivxlcdm]+)[\)\）\.、\s\-]*", "", title)
         return level, title
@@ -343,7 +400,45 @@ class WikiPageParser:
             total += statistics.mean(list(map(lambda x: len(x), re.split(r"[、,-]", text))))
         return total // count if count != 0 else 0
 
-    def _convert_list(self, doc: bs4.Tag | None):
+    def _convert_list(self, doc: bs4.Tag):
+        items = []
+        list_title = ""
+        if doc:
+            if doc.find_all("dl"):
+                results: list[ListConvertResult] = []
+                for li in doc.find_all("li", recursive=False):
+                    title = li.find(string=True).strip()  # type: ignore
+                    if "撤退する今川勢急襲説" in title:
+                        new_title = title.split("\u3000")[0]
+                        content = title.split("\u3000")[-1]
+                        results.append(ListConvertResult(list_title=new_title, need_rewrite=False, items=[content]))
+                    else:
+                        items = [dd.get_text(strip=True) for dd in li.find_all("dd")]
+                        results.append(ListConvertResult(list_title=title, need_rewrite=False, items=items))
+                return results
+            else:
+                texts = [li.get_text(strip=True) for li in doc.find_all("li")]
+                mean_char = self._compute_list_mean_char(texts=texts, is_table=True)
+                prev_tag = doc.find_previous_sibling()
+                # 提取可能的title
+                if prev_tag:
+                    if prev_tag.name == "dl":
+                        list_title = prev_tag.get_text(strip=True)
+                elif doc.parent:
+                    prev = doc.parent.find_previous_sibling()
+                    if prev and prev.name == "dl":
+                        list_title = prev.get_text(strip=True)
+                if mean_char > self.max_list_mean_char:
+                    # 不需要LLM改写, 返回文本
+                    items = [li.get_text(strip=True) for li in doc.find_all("li")]
+                return [
+                    ListConvertResult(
+                        list_title=list_title, need_rewrite=mean_char <= self.max_list_mean_char, items=items, doc=doc
+                    )
+                ]
+        return []
+
+    def _convert_list2(self, doc: bs4.Tag | None):
         """
         转换List
 
@@ -364,7 +459,7 @@ class WikiPageParser:
                 if prev and prev.name == "dl":
                     list_title = prev.get_text(strip=True)
 
-            if mean_char < self.max_list_mean_char:
+            if mean_char <= self.max_list_mean_char:
                 # 小于指定长度使用LLM改写
                 items = [li.get_text(strip=True) for li in doc.find_all("li")]
                 items.append("llm invoke")
@@ -379,7 +474,7 @@ class WikiPageParser:
         page: WikiPage,
         current_title: str,
         block_type: BlockType,
-        content: str | list,
+        content: str | list[str],
         list_title: str | None = None,
     ):
         """
@@ -419,52 +514,59 @@ class WikiPageParser:
         </dl>
         """
         list_titles: list[str] = []
-        values: dict[str, list[str]] = defaultdict(list)
+        values: dict[str, bs4.Tag] = {}
         current_title = ""
         for tag in doc.find_all(["dt", "dd"], recursive=False):
             text = tag.get_text(strip=True)
             if tag.name == "dt":
                 list_titles.append(text)
                 current_title = text
+                values[text] = BeautifulSoup("", "html.parser").new_tag("dl")
             if tag.name == "dd":
-                values[current_title].append(text)
+                values[current_title].append(tag)
 
-        items: list[list[str]] = []
-        remove_titles = []
+        items: list[bs4.Tag] = []
+        results: list[ListConvertResult] = []
         for title in list_titles:
             value = values[title]
             if value:
-                mean_char = self._compute_list_mean_char(texts=value)
-                if mean_char < self.max_list_mean_char:
-                    value.append("llm invoke")
-                    items.append(value)
+                texts = [item.get_text(strip=True) for item in value]
+                mean_char = self._compute_list_mean_char(texts=[item.get_text(strip=True) for item in value])
+                items.append(value)
+                result = ListConvertResult(list_title=title, need_rewrite=mean_char <= self.max_list_mean_char)
+                if result.need_rewrite:
+                    new_dl = BeautifulSoup("", "html.parser").new_tag("dl")
+                    for dd in value.find_all("dd", recursive=False):
+                        new_dl.append(dd)
+                    result.doc = new_dl
                 else:
-                    items.append(value)
-            else:
-                remove_titles.append(title)
-        for remove_title in remove_titles:
-            list_titles.remove(remove_title)
-        return list_titles, items
+                    result.items = texts
+                results.append(result)
+        return results
 
     def _convert_two_dd_list(self, doc: bs4.Tag):
         """
         处理多dd的列表, 第一个dd是按标题处理
 
         结构:
-
         """
         title = ""
         items = []
+        tags: list[bs4.Tag] = []
         for idx, dd in enumerate(doc.find_all("dd", recursive=False)):
             text = dd.get_text(strip=True)
             if idx == 0:
                 title = text
                 continue
             items.append(text)
+            tags.append(dd)
         mean_char = self._compute_list_mean_char(texts=items)
-        if mean_char < self.max_list_mean_char:
-            items.append("llm invoke")
-        return title, items
+        result = ListConvertResult(list_title=title, need_rewrite=mean_char <= self.max_list_mean_char)
+        if result.need_rewrite:
+            result.doc.extend(tags)
+        else:
+            result.items = items
+        return result
 
     def _add_list_to_block(
         self,
@@ -472,15 +574,19 @@ class WikiPageParser:
         page: WikiPage,
         current_title: str,
         list_title: str,
-        items: list[str],
+        content: bs4.Tag | list[str],
         is_order: bool = False,
     ):
+        if isinstance(content, list):
+            block_content = content
+        else:
+            block_content = re.sub(r">\s+<", "><", str(content)).replace("\n", "")
         self._add_block(
             doc=doc,
             page=page,
             current_title=current_title,
             block_type="olist" if is_order else "ulist",
-            content=items,
+            content=block_content,
             list_title=list_title,
         )
 
@@ -578,3 +684,29 @@ class WikiPageParser:
         result = response.choices[0].message.content
         assert result is not None
         return WikiTableSchema.model_validate_json(result)
+
+
+if __name__ == "__main__":
+    test_titles = [
+        "織田信長",
+        "豊臣秀吉",
+        "徳川家康",
+        "武田信玄",
+        "上杉謙信",
+        "伊達政宗",
+        "桶狭間の戦い",
+        "本能寺の変",
+        "関ヶ原の戦い",
+        "大坂の陣",
+        "方広寺鐘銘事件",
+        "応仁の乱",
+    ]
+    parser = WikiPageParser()
+    for title in test_titles:
+        print(title)
+        wiki_page = parser.parse(page_title=title, lang="ja")
+        if wiki_page:
+            with open(f"preview/{title}.json", mode="w", encoding="utf-8") as f:
+                f.write(wiki_page.model_dump_json(indent=2))
+            with open(f"preview/{title}.md", mode="w", encoding="utf-8") as f:
+                f.write(wiki_page.merge_sections())

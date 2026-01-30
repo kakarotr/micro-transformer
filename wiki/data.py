@@ -4,8 +4,9 @@ ignore_sections = [
     "脚注",
     "肖像",
     "研究",
-    "系谱",
+    "系譜",
     "家族",
+    "出典",
     "その他",
     "関連書籍",
     "諸将の去就",
@@ -29,6 +30,8 @@ ignore_sections = [
     "祭祀",
     "祭礼",
     "一族縁者",
+    "容姿",
+    "年忌供養",
 ]
 fuzzy_sections = [
     "墓所",
@@ -47,4 +50,4 @@ fuzzy_sections = [
     "主題とした作品",
 ]
 
-replace_links = ("file:", "image:", "category:", "檔案:", "文件:", "分類:", "分类:")
+delete_title = ["出典"]
