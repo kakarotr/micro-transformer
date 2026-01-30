@@ -50,4 +50,4 @@ fuzzy_sections = [
     "主題とした作品",
 ]
 
-delete_title = ["出典"]
+delete_title = ["出典", "趣味・趣向"]

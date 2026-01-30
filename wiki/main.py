@@ -56,7 +56,7 @@ def process_fetch(chunk):
                     (TypeAdapter(list[WikiSection]).dump_json(page.sections).decode(), item[0]),
                 )
                 print(f"{item[1]}处理完成")
-            time.sleep(random.uniform(0.5, 2))
+            time.sleep(2)
         except:
             error_stack = traceback.format_exc()
             print(f"{item[1]}错误: err: {error_stack}")
