@@ -24,7 +24,7 @@ if __name__ == "__main__":
         "応仁の乱",
     ]
     parser = WikiPageParser()
-    title = "堀秀重"
+    title = "豊臣秀吉"
     wiki_page: None | WikiPage = parser.parse(page_title=title, lang="ja")
     if wiki_page:
         with open(f"preview/{title}.json", mode="w", encoding="utf-8") as f:

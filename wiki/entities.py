@@ -9,6 +9,7 @@ class SectionBlock(BaseModel):
     type: BlockType
     list_title: str | None = None
     content: str | list
+    lang: str | None = None
 
 
 class WikiSection(BaseModel):

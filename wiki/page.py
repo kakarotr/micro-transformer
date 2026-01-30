@@ -489,7 +489,13 @@ class WikiPageParser:
                 block_content: str | list[str] = last_section.blocks[-1].content
                 if block_content:
                     if isinstance(content, str):
-                        last_section.blocks[-1].content = f"{block_content}\n\n{content}"
+                        if block_type == "text":
+                            last_section.blocks[-1].content = f"{block_content}\n\n{content}"
+                        else:
+                            last_section.blocks.append(
+                                SectionBlock(type=block_type, content=content, list_title=list_title)
+                            )
+
                     else:
                         last_section.blocks.append(
                             SectionBlock(type=block_type, content=content, list_title=list_title)
@@ -525,14 +531,12 @@ class WikiPageParser:
             if tag.name == "dd":
                 values[current_title].append(tag)
 
-        items: list[bs4.Tag] = []
         results: list[ListConvertResult] = []
         for title in list_titles:
             value = values[title]
             if value:
-                texts = [item.get_text(strip=True) for item in value]
+                texts = [item.get_text(strip=True) for item in value.find_all("dd")]
                 mean_char = self._compute_list_mean_char(texts=[item.get_text(strip=True) for item in value])
-                items.append(value)
                 result = ListConvertResult(list_title=title, need_rewrite=mean_char <= self.max_list_mean_char)
                 if result.need_rewrite:
                     new_dl = BeautifulSoup("", "html.parser").new_tag("dl")
