@@ -17,4 +17,5 @@ class WikiTableSchema(BaseModel):
 
 
 class WikiListSchema(BaseModel):
+    # list_title: Annotated[str | None, Field(description="翻译之后的列表标题")] = None
     items: Annotated[list[str], Field(..., description="列表语义化转换之后的元素")]

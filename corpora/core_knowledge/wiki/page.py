@@ -1,5 +1,4 @@
 import itertools
-import json
 import os
 import re
 import statistics
@@ -10,11 +9,7 @@ import bs4
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
-
-from utils.db import get_db_conn
-from utils.prompt import wiki_list_prompt, wiki_table_prompt
-from utils.schemas import WikiListSchema, WikiTableSchema
-from wiki.data import fuzzy_sections, ignore_sections
+from wiki.data import fuzzy_sections, ignore_sections, special_title
 from wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
 
 
@@ -86,7 +81,11 @@ class WikiPageParser:
                 if title in ignore_sections or any(fuzzy in title for fuzzy in fuzzy_sections):
                     current_ignore_level = level
                     continue
-                if page_title == "徳川家康" and title == "人物・逸話":
+                is_ignore = False
+                for key, value in special_title.items():
+                    if page_title == key and title in value:
+                        is_ignore = True
+                if is_ignore:
                     current_ignore_level = level
                     continue
 
@@ -636,58 +635,6 @@ class WikiPageParser:
                         dl = root.new_tag("dl", string=text)
                         ul.insert_after(dl)
                         lis[1].decompose()
-
-    def _rewrite_list(
-        self,
-        page_title: str,
-        section_title: str,
-        content: str,
-        list_title: str | None = None,
-    ):
-        response = self.llm_client.chat.completions.create(
-            model=self.llm_name,
-            messages=[
-                {
-                    "role": "system",
-                    "content": wiki_list_prompt.format(
-                        json_schema=json.dumps(WikiListSchema.model_json_schema(), ensure_ascii=False),
-                        page_title=page_title,
-                        section_title=section_title,
-                        list_title=list_title,
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            response_format={"type": "json_object"},
-        )
-        result = response.choices[0].message.content
-        assert result is not None
-        return WikiListSchema.model_validate_json(result).items
-
-    def _rewrite_table(
-        self,
-        page_title: str,
-        section_title: str,
-        content: str,
-    ):
-        response = self.llm_client.chat.completions.create(
-            model=self.llm_name,
-            messages=[
-                {
-                    "role": "system",
-                    "content": wiki_table_prompt.format(
-                        json_schema=json.dumps(WikiTableSchema.model_json_schema(), ensure_ascii=False),
-                        page_title=page_title,
-                        section_title=section_title,
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            response_format={"type": "json_object"},
-        )
-        result = response.choices[0].message.content
-        assert result is not None
-        return WikiTableSchema.model_validate_json(result)
 
 
 if __name__ == "__main__":
