@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from config import ModelConfig
+from models.config import ModelConfig
 from models.components.attention import MultiHeadAttention
 from models.components.mlp import MLP
 from models.components.rms import RMSNorm

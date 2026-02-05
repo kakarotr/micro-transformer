@@ -1,6 +1,6 @@
 import os
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 
 def get_deepseek_client():
@@ -15,3 +15,10 @@ def get_kimi_client():
     kimi_key = os.environ["KIMI_KEY"]
 
     return "kimi-k2-0905-preview", OpenAI(base_url=kimi_url, api_key=kimi_key)
+
+
+def get_async_kimi_client():
+    kimi_url = os.environ["KIMI_URL"]
+    kimi_key = os.environ["KIMI_KEY"]
+
+    return "kimi-k2-0905-preview", AsyncOpenAI(base_url=kimi_url, api_key=kimi_key)

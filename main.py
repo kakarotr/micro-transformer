@@ -1,13 +1,9 @@
 from dotenv import load_dotenv
 
-from wiki.entities import WikiPage
-
 load_dotenv()
 
 
 if __name__ == "__main__":
-    from wiki.page import WikiPageParser
-
     test_titles = [
         "織田信長",
         "豊臣秀吉",
@@ -24,11 +20,3 @@ if __name__ == "__main__":
         "応仁の乱",
         "文禄・慶長の役",
     ]
-    parser = WikiPageParser()
-    title = "豊臣秀吉"
-    wiki_page: None | WikiPage = parser.parse(page_title=title, lang="ja")
-    if wiki_page:
-        with open(f"preview/{title}.json", mode="w", encoding="utf-8") as f:
-            f.write(wiki_page.model_dump_json(indent=2))
-        with open(f"preview/{title}.md", mode="w", encoding="utf-8") as f:
-            f.write(wiki_page.merge_sections())

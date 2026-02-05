@@ -1,17 +1,27 @@
+import asyncio
 import json
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from typing import Annotated
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, TypeAdapter
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from corpora.core_knowledge.wiki.entities import WikiSection
 from corpora.core_knowledge.wiki.utils import get_chunks
-from utils.client import get_deepseek_client, get_kimi_client
+from utils.client import get_async_kimi_client
 from utils.db import get_db_conn
 
 load_dotenv()
+global_sem = asyncio.Semaphore(100)
 
 
 class Result(BaseModel):
@@ -36,7 +46,7 @@ paragraph_prompt = f"""
 
 # Constraints
 1. **格式与结构保留（最高优先级）**：
-   - **必须严格保留**原文的 Markdown 结构符号，包括标题（#、##、###）、加粗（**...**）、列表符号（- 或 *）以及引用块（>）。
+   - **必须严格保留**原文的 Markdown 结构符号，包括标题（#、##、###）、加粗（**...**）。
    - **必须保留**段落之间的换行符（\n\n）。不要合并段落。
    - 标题行不要添加任何额外的标点符号。
 
@@ -89,12 +99,15 @@ title_prompt = f"""
 #     messages=[
 #         {
 #             "role": "system",
-#             "content": title_prompt,
+#             "content": paragraph_prompt,
 #         },
 #         {
 #             "role": "user",
 #             "content": """
-# 略歴
+# - 天正元年（1572年）冬、陸奥の伊達輝宗から鷹が献上され、信長は伊達氏の分国を「直風」にした。他の奥羽の領主たちも鷹や馬を献上した。,
+# - 天正4年（1576年）4月、毛利輝元の叔父・小早川隆景が信長に太刀、馬、銀子1,000枚を献上し、信長は羽柴秀吉を介して謝意を伝えた。,
+# - 天正8年（1580年）3月9日、北条氏政は使者を上洛させ、信長に鷹13羽、馬5頭を献上し、北条分国を信長に進上した。,
+# - 天正8年（1580年）6月26日、長宗我部元親が鷹16羽を信長に献上した。
 # """,
 #         },
 #     ],
@@ -104,35 +117,111 @@ title_prompt = f"""
 # print(response.choices[0].message.content)
 
 
-def translate_title():
-    model_name, client = get_kimi_client()
-
-
 def translate(n_threads: int):
     chunks = get_chunks(
-        sql="select title, sections from wiki_pages where sections is not null and title = '織田信長'",
+        sql="select title, sections, id from wiki_pages where sections is not null and lang = 'ja' and title not in ('北庵法印', '石川久智', '太田牛一', '蒲生貞秀', '宮兼信', '石川伊予守', '坂崎直盛', '後醍院宗重') limit 4000",
         n_threads=n_threads,
     )
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}", justify="left"),
+        BarColumn(bar_width=40),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+    ) as progress:
+        total_items = sum(len(c) for c in chunks)
+        overall_task = progress.add_task("[yellow]总进度", total=total_items)
 
-    with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        executor.map(start_translate, chunks)
+        with ThreadPoolExecutor(max_workers=n_threads) as executor:
+            futures = []
+            for i, chunk in enumerate(chunks):
+                # 为每个线程创建一个独立的子进度条
+                task_id = progress.add_task(f"[cyan]线程-{i + 1}", total=len(chunk))
+                futures.append(executor.submit(start_translate, chunk, progress, task_id, overall_task))
+
+            # 等待所有线程完成
+            for future in futures:
+                future.result()
 
 
-def start_translate(chunk):
-    conn = get_db_conn()
-    cursor = conn.cursor()
-    adapter = TypeAdapter(list[WikiSection])
-    for item in chunk:
+def start_translate(chunk, progress, task_id, overall_task):
+    if not chunk:
+        return
+    return asyncio.run(thread_coroutine_manager(chunk, progress, task_id, overall_task))
+
+
+async def thread_coroutine_manager(chunk, progress, task_id, overall_task):
+    results = await process_row(chunk, progress, task_id, overall_task)
+    if results:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        for item in results:
+            if item:
+                id, data = item
+                cursor.execute("update wiki_pages set sections = %s, lang='zh' where id = %s", (data, id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        progress.update(task_id, description=f"[green]线程已完成[/green]")
+
+
+async def process_row(chunk, progress, task_id, overall_task):
+    results = []
+    for row in chunk:
+        page_title, sections, id = row
+        adapter = TypeAdapter(list[WikiSection])
         try:
-            sections = adapter.validate_python(item[1])
+            sections = adapter.validate_python(sections)
             for section in sections:
+                tasks = []
+                display_title = (page_title[:12] + "...") if len(page_title) > 12 else page_title.ljust(15)
+                progress.update(task_id, description=f"正在翻译: {display_title}")
+                # 翻译标题
                 title = section.title
-
+                tasks.append(("title", section, llm_translate(type="title", text=title)))
+                # 翻译内容
+                for block in section.blocks:
+                    if block.lang != "zh" and block.content:
+                        if isinstance(block.content, str):
+                            text = block.content
+                        else:
+                            text = "\n".join([f"- {item}" for item in block.content])
+                        tasks.append(("block", block, llm_translate(type="paragraph", text=text)))
+                if tasks:
+                    task_results = await asyncio.gather(*(t[2] for t in tasks))
+                    for (task_type, target_obj, _), result in zip(tasks, task_results):
+                        if task_type == "title":
+                            target_obj.title = result.text
+                        else:
+                            target_obj.lang = "zh"
+                            target_obj.content = result.text
+            # with open("preview/zh.md", mode="w", encoding="utf-8") as f:
+            #     f.write(WikiPage(title=page_title, category_name="", lang="", sections=sections).merge_sections())
+            results.append((id, adapter.dump_json(sections).decode()))
         except:
             error_stack = traceback.format_exc()
-            print(f"{item[0]}错误: err: {error_stack}")
-    cursor.close()
-    conn.close()
+            print(f"{page_title}错误: err: {error_stack}")
+        finally:
+            progress.update(task_id, advance=1)
+            progress.update(overall_task, advance=1)
+    return results
+
+
+async def llm_translate(type: Literal["title", "paragraph"], text: str):
+    async with global_sem:
+        model_name, client = get_async_kimi_client()
+        response = await client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": title_prompt if type == "title" else paragraph_prompt},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+        result = response.choices[0].message.content
+        assert result is not None
+        return Result.model_validate_json(result)
 
 
 if __name__ == "__main__":
@@ -140,4 +229,4 @@ if __name__ == "__main__":
 
     load_dotenv()
 
-    translate(n_threads=1)
+    translate(n_threads=5)

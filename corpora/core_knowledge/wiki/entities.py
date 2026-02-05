@@ -23,7 +23,6 @@ class WikiPage(BaseModel):
     category_name: str
     lang: str
     sections: list[WikiSection]
-    full_content: str | None
 
     def merge_sections(self):
         contents = []
