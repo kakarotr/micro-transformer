@@ -14,20 +14,14 @@ from corpora.core_knowledge.wiki.entities import (
 ignore_sections = [
     "人际关系",
     "后世纪念",
-    "艺术形象",
-    "影视形象",
     "相关作品",
-    "亲族家室",
-    "艺术形象",
     "人物争议",
     "主要作品",
     "历史评价",
     "人物履历",
-    "人物家族",
-    "亲属成员",
     "墓址寺院",
-    "影视形象",
 ]
+fuzzy_sections = ["典故", "形象", "亲族", "家族", "登场", "亲属"]
 
 
 def find_title(tag: bs4.Tag):
@@ -127,6 +121,10 @@ def parse_baidu(page_title: str, content: str):
                 if title in ignore_sections:
                     current_ignore_level = level
                     continue
+                if any(item in title for item in fuzzy_sections):
+                    current_ignore_level = level
+                    continue
+
                 pedia_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
             elif paragraph.name == "ul":
                 if len(paragraph.find_all("li", recursive=False)) == 1:
@@ -152,9 +150,15 @@ def parse_baidu(page_title: str, content: str):
                         content=content,
                     )
                 elif paragraph.name == "ul":
-                    pass
+                    texts = [li.get_text(strip=True) for li in paragraph.find_all("li")]
+                    add_block(
+                        doc=paragraph, page=pedia_page, current_title=current_title, block_type="ulist", content=texts
+                    )
                 elif paragraph.name == "ol":
-                    pass
+                    texts = [li.get_text(strip=True) for li in paragraph.find_all("li")]
+                    add_block(
+                        doc=paragraph, page=pedia_page, current_title=current_title, block_type="olist", content=texts
+                    )
         with open(f"preview/{page_title}.md", mode="w", encoding="utf-8") as f:
             f.write(pedia_page.merge_sections())
 
@@ -215,7 +219,7 @@ co.set_user_agent(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
 )
 
-title = "织田信长"
+title = "安土桃山时代"
 page = ChromiumPage(addr_or_opts=co)
 page.get(f"https://baike.baidu.com/item/{title}")
 page.wait.ele_displayed(".lemma-summary", timeout=5)

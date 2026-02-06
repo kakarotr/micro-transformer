@@ -1,139 +1,148 @@
 import json
-import math
 import os
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
+import wikipediaapi
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from openai import OpenAI
+from opencc import OpenCC
 from pydantic import TypeAdapter
 
-from corpora.core_knowledge.wiki.utils import get_chunks
+from corpora.core_knowledge.wiki.entities import SectionBlock, WikiPage, WikiSection
+from corpora.core_knowledge.wiki.main import llm_rewrite, wiki_rewrite_prompt
+from corpora.core_knowledge.wiki.page import WikiPageParser
+from corpora.core_knowledge.wiki.utils import get_chunks, get_wiki
 from utils.db import get_db_conn
-from utils.prompt import wiki_rewrite_prompt
 from utils.schemas import WikiListSchema
 
-from .entities import SectionBlock, WikiPage, WikiSection
-from .page import WikiPageParser
+load_dotenv()
 
-ignore_sections = [
-    "他",
-    "首塚",
-    "菩提寺",
-    "脚注",
-    "肖像",
-    "研究",
-    "系譜",
-    "系図",
-    "家族",
-    "出典",
-    "その他",
-    "関連書籍",
-    "諸将の去就",
-    "テレビ番組",
-    "人物像",
-    "見しかよの物かたり",
-    "墓所・霊廟・寺社",
-    "関連事項",
-    "関連項目",
-    "外部リンク",
-    "豊臣秀吉を題材とする作品",
-    "テレビ番組",
-    "史跡等",
-    "関連史料",
-    "関連作品",
-    "展覧会",
-    "脚注",
-    "祭祀",
-    "祭礼",
-    "一族縁者",
-    "容姿",
-    "年忌供養",
-    "趣味・趣向",
-    "親族",
-    "登場作品",
-    "子孫",
-    "編纂物",
-    "備考",
-    "関連人物",
-    "登場作品",
-    "注釈",
-    "補註",
-    "和歌",
-    "小説",
-    "屋敷",
-    "岩堰用水路",
-    "演者",
-    "俗説",
-    "登場するテレビドラマ",
-    "の資料",
-    "創作物",
-    "書籍",
-    "テレビドラマ",
-]
+ignore_sections = ["家庭", "辭世之句", "參見", "徵引", "遺品", "關聯作品"]
 fuzzy_sections = [
-    "墓所",
-    "文献",
-    "参考",
-    "出典",
-    "支城",
-    "碑",
-    "霊廟",
-    "遺品",
-    "肖像",
-    "銅像",
-    "題材とした作品",
-    "演じた人物",
-    "する作品",
-    "した関連作品",
-    "いた作品",
+    "登場",
+    "家族",
+    "註釋",
+    "註解",
+    "資料",
+    "參考資料",
+    "系譜",
+    "文獻",
+    "連結",
+    "墓",
     "偏諱",
-    "支配した主な城",
-    "主題とした作品",
-    "関連作品",
-    "家紋",
+    "銅像",
+    "項目",
+    "腳註",
+    "參考",
+    "參看",
+    "作品",
+    "相關條目",
+    "附註",
+    "與力",
+    "出處",
+    "相關",
 ]
-special_title = {"宇都宮成綱": ["家臣", "人物・逸話"], "徳川家康": ["人物・逸話"]}
 
 
-def fetch_page(n_threads: int = 10):
-    chunks = get_chunks(sql="select id, title, lang from wiki_pages where raw_sections is null", n_threads=n_threads)
-
-    with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        executor.map(process_fetch, chunks)
-
-
-def process_fetch(chunk):
+def fetch_page_by_category():
     conn = get_db_conn()
-    conn.autocommit = True
     cursor = conn.cursor()
-    parser = WikiPageParser(ignore_sections=ignore_sections, fuzzy_sections=fuzzy_sections, special_title=special_title)
-    for item in chunk:
-        try:
-            page = parser.parse(page_title=item[1], lang=item[2])
-            if page:
-                cursor.execute(
-                    "update wiki_pages set raw_sections = %s where id = %s",
-                    (TypeAdapter(list[WikiSection]).dump_json(page.sections).decode(), item[0]),
-                )
-                print(f"{item[1]}处理完成")
-            time.sleep(2)
-        except:
-            error_stack = traceback.format_exc()
-            print(f"{item[1]}错误: err: {error_stack}")
+
+    inserted_pages = []
+    cursor.execute("select id, name from wiki_categories where lang = 'zh'")
+    rows = cursor.fetchall()
+
+    for id, category_name in rows:
+        wiki = get_wiki(lang="zh")
+        category = wiki.page(f"Category:{category_name}")
+        for member in category.categorymembers.values():
+            if member.namespace == wikipediaapi.Namespace.MAIN:
+                if member.title not in inserted_pages:
+                    cursor.execute(
+                        "insert into pedia_core_corpus (title, source) values (%s, 'zh_wiki')", (member.title,)
+                    )
+        cursor.execute("update wiki_categories set status = 1 where id = %s", (id,))
+    conn.commit()
+
     cursor.close()
     conn.close()
 
 
-def llm_rewrite(n_threads: int = 10):
+def fetch_page():
     chunks = get_chunks(
-        sql="select id, title, raw_sections from wiki_pages where sections is null",
-        n_threads=n_threads,
+        sql="select id, title from pedia_core_corpus where raw_sections is null and source = 'wiki_zh'", n_threads=10
     )
 
-    with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        executor.map(process_rewrite, chunks)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        executor.map(process, chunks)
+
+
+def process(chunk):
+    conn = get_db_conn()
+    cursor = conn.cursor()
+
+    opencc = OpenCC("tw2sp")
+    ignore_sections.extend([opencc.convert(item) for item in ignore_sections])
+    fuzzy_sections.extend([opencc.convert(item) for item in fuzzy_sections])
+    parser = WikiPageParser(
+        ignore_sections=ignore_sections,
+        fuzzy_sections=fuzzy_sections,
+    )
+    adapter = TypeAdapter(list[WikiSection])
+
+    for id, title in chunk:
+        try:
+            page = parser.parse(page_title=title)
+            if page:
+                cursor.execute(
+                    "update pedia_core_corpus set raw_sections = %s where id = %s",
+                    (opencc.convert(adapter.dump_json(page.sections).decode()), id),
+                )
+                conn.commit()
+                print(f"{title}处理完成")
+                time.sleep(2)
+        except:
+            error_stack = traceback.format_exc()
+            print(f"{title}错误: err: {error_stack}")
+
+    cursor.close()
+    conn.close()
+
+
+def convert_title():
+    opencc = OpenCC("tw2sp")
+    conn = get_db_conn()
+    cursor = conn.cursor()
+
+    cursor.execute("select id, title from pedia_core_corpus where title_sp is null")
+    rows = cursor.fetchall()
+
+    for id, title in rows:
+        cursor.execute("update pedia_core_corpus set title_sp = %s where id = %s", (opencc.convert(title), id))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def gen_file():
+    conn = get_db_conn()
+    cursor = conn.cursor()
+
+    cursor.execute("select title_sp, sections from pedia_core_corpus where source = 'wiki_zh' and sections is not null")
+    rows = cursor.fetchall()
+    adapter = TypeAdapter(list[WikiSection])
+    for title, sections in rows:
+        content = adapter.validate_python(sections)
+        page = WikiPage(title=title, category_name="", lang="zh", sections=content)
+        with open(f"preview/wiki_zh/{title}.md", mode="w", encoding="utf-8") as f:
+            f.write(page.merge_sections())
+
+    cursor.close()
+    conn.close()
 
 
 def process_rewrite(chunk):
@@ -204,9 +213,10 @@ def process_rewrite(chunk):
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
+    chunks = get_chunks(
+        sql="select id, title_sp, raw_sections from pedia_core_corpus where sections is null",
+        n_threads=10,
+    )
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        executor.map(process_rewrite, chunks)
 
-    load_dotenv()
-
-    llm_rewrite(n_threads=50)
-    llm_rewrite(n_threads=50)

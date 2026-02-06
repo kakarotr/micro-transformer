@@ -9,8 +9,8 @@ import bs4
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
-from wiki.data import fuzzy_sections, ignore_sections, special_title
-from wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
+
+from .entities import BlockType, SectionBlock, WikiPage, WikiSection
 
 
 @dataclass
@@ -22,10 +22,18 @@ class ListConvertResult:
 
 
 class WikiPageParser:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        ignore_sections: list[str] = [],
+        fuzzy_sections: list[str] = [],
+        special_title: dict[str, list[str]] = {},
+    ) -> None:
         self.max_list_mean_char = 10
         self.llm_name = os.environ["LLM_NAME"]
         self.llm_client = OpenAI(base_url=os.environ["LLM_URL"], api_key=os.environ["LLM_KEY"])
+        self.ignore_sections = ignore_sections
+        self.fuzzy_sections = fuzzy_sections
+        self.special_title = special_title
 
     def parse(self, page_title: str, lang: str = "zh", debug: bool = False):
         content_doc = self._get_html_doc(title=page_title, lang=lang)
@@ -34,10 +42,12 @@ class WikiPageParser:
         if debug:
             with open(f"preview/{page_title}.html", mode="w", encoding="utf-8") as f:
                 f.write(content_doc.prettify())
-        wiki_page = WikiPage(title=page_title, category_name="", lang=lang, sections=[], full_content="")
+        wiki_page = WikiPage(title=page_title, category_name="", lang=lang, sections=[])
 
         # 处理摘要
         marker = content_doc.select_one("div.mw-heading")
+        with open(f"preview/a.html", mode="w", encoding="utf-8") as f:
+            f.write(content_doc.prettify())
         if not marker:
             # 没有找到标题, 说明当前页面只有一份摘要
             wiki_page.sections.append(
@@ -77,12 +87,11 @@ class WikiPageParser:
 
                 current_level = level
                 current_title = title
-
-                if title in ignore_sections or any(fuzzy in title for fuzzy in fuzzy_sections):
+                if title in self.ignore_sections or any(fuzzy in title for fuzzy in self.fuzzy_sections):
                     current_ignore_level = level
                     continue
                 is_ignore = False
-                for key, value in special_title.items():
+                for key, value in self.special_title.items():
                     if page_title == key and title in value:
                         is_ignore = True
                 if is_ignore:
@@ -278,9 +287,9 @@ class WikiPageParser:
             tag.decompose()
 
         # 删除small, 特殊处理<p><small></small></p>
-        for small_tag in doc.find_all("small"):
-            if small_tag.parent and small_tag.parent.name == "p":
-                small_tag.parent.decompose()
+        # for small_tag in doc.find_all("small"):
+        #     if small_tag.parent and small_tag.parent.name == "p":
+        #         small_tag.parent.decompose()
 
         # 修改加粗标签为Markdown加粗格式
         for block_tag in doc.find_all("b"):

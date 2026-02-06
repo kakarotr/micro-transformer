@@ -119,7 +119,7 @@ title_prompt = f"""
 
 def translate(n_threads: int):
     chunks = get_chunks(
-        sql="select title, sections, id from wiki_pages where sections is not null and lang = 'ja' and title not in ('北庵法印', '石川久智', '太田牛一', '蒲生貞秀', '宮兼信', '石川伊予守', '坂崎直盛', '後醍院宗重') limit 4000",
+        sql="select title, sections, id from wiki_pages where sections is not null and lang = 'ja' and title not in ('北庵法印', '石川久智', '太田牛一', '蒲生貞秀', '宮兼信', '石川伊予守', '坂崎直盛', '後醍院宗重', '結城秀康', '前野景定', '生石治家', '斯波義重', '深谷吉次', '松山城風流合戦', '鎌倉幕府', '武士道', '小田原征伐', '畠山宣意', '市川等長', '陰徳太平記', '鶴岡八幡宮の戦い', '豊臣秀頼')",
         n_threads=n_threads,
     )
     with Progress(
