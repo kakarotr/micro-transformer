@@ -209,4 +209,3 @@ if __name__ == "__main__":
     load_dotenv()
 
     llm_rewrite(n_threads=50)
-    llm_rewrite(n_threads=50)

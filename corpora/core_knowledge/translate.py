@@ -154,6 +154,7 @@ async def thread_coroutine_manager(chunk, progress, task_id, overall_task):
     results = await process_row(chunk, progress, task_id, overall_task)
     if results:
         conn = get_db_conn()
+        conn.autocommit = True
         cursor = conn.cursor()
         for item in results:
             if item:
@@ -195,8 +196,6 @@ async def process_row(chunk, progress, task_id, overall_task):
                         else:
                             target_obj.lang = "zh"
                             target_obj.content = result.text
-            # with open("preview/zh.md", mode="w", encoding="utf-8") as f:
-            #     f.write(WikiPage(title=page_title, category_name="", lang="", sections=sections).merge_sections())
             results.append((id, adapter.dump_json(sections).decode()))
         except:
             error_stack = traceback.format_exc()

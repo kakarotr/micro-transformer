@@ -199,7 +199,7 @@ def process_rewrite(chunk):
                         new_section.blocks.append(block)
                 new_sections.append(new_section)
             cursor.execute(
-                "update wiki_pages set sections = %s where id = %s",
+                "update pedia_core_corpus set sections = %s where id = %s",
                 (TypeAdapter(list[WikiSection]).dump_json(new_sections).decode(), item[0]),
             )
             with open(f"preview/{item[1]}.md", mode="w", encoding="utf-8") as f:
