@@ -1,6 +1,9 @@
+import random
 import re
+import time
 
 import bs4
+import pandas as pd
 from bs4 import BeautifulSoup
 from DrissionPage import ChromiumOptions, ChromiumPage
 
@@ -126,15 +129,13 @@ def parse_baidu(page_title: str, content: str):
                     continue
 
                 pedia_page.sections.append(WikiSection(title=title, level=level, blocks=[]))
-            elif paragraph.name == "ul":
-                if len(paragraph.find_all("li", recursive=False)) == 1:
-                    text = paragraph.get_text(strip=True)
-                    level = find_title_level(tag=paragraph) + 2
+            elif paragraph.name == "ul" and len(paragraph.find_all("li", recursive=False)) == 1:
+                text = paragraph.get_text(strip=True)
+                level = find_title_level(tag=paragraph) + 2
 
-                    current_title = text
-                    current_level = level
-
-                    pedia_page.sections.append(WikiSection(title=current_title, level=current_level, blocks=[]))
+                current_title = text
+                current_level = level
+                pedia_page.sections.append(WikiSection(title=current_title, level=current_level, blocks=[]))
             else:
                 if current_ignore_level is not None:
                     if current_level >= current_ignore_level:
@@ -150,15 +151,25 @@ def parse_baidu(page_title: str, content: str):
                         content=content,
                     )
                 elif paragraph.name == "ul":
-                    texts = [li.get_text(strip=True) for li in paragraph.find_all("li")]
+                    texts = [li.get_text(strip=True) for li in paragraph.find_all("li", recursive=False)]
                     add_block(
                         doc=paragraph, page=pedia_page, current_title=current_title, block_type="ulist", content=texts
                     )
                 elif paragraph.name == "ol":
-                    texts = [li.get_text(strip=True) for li in paragraph.find_all("li")]
+                    texts = [li.get_text(strip=True) for li in paragraph.find_all("li", recursive=False)]
                     add_block(
                         doc=paragraph, page=pedia_page, current_title=current_title, block_type="olist", content=texts
                     )
+                elif paragraph.attrs and paragraph.attrs.get("data-module-type") == "table":
+                    table = paragraph.find("table")
+                    if table and table.find("tbody"):
+                        add_block(
+                            doc=paragraph,
+                            page=pedia_page,
+                            current_title=current_title,
+                            block_type="table",
+                            content=re.sub(r">\s+<", "><", str(table.find("tbody"))).replace("\n", ""),
+                        )
         with open(f"preview/{page_title}.md", mode="w", encoding="utf-8") as f:
             f.write(pedia_page.merge_sections())
 
@@ -214,15 +225,45 @@ def filter_baidu_tag(doc: bs4.BeautifulSoup):
         #         ul.decompose()
 
 
-co = ChromiumOptions()
-co.set_user_agent(
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-)
+def test():
+    co = ChromiumOptions()
+    co.set_user_agent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    )
 
-title = "安土桃山时代"
-page = ChromiumPage(addr_or_opts=co)
-page.get(f"https://baike.baidu.com/item/{title}")
-page.wait.ele_displayed(".lemma-summary", timeout=5)
-parse_baidu(page_title=title, content=page.html)
+    title = "织田信长"
+    page = ChromiumPage(addr_or_opts=co)
+    page.get(f"https://baike.baidu.com/item/{title}")
+    page.wait.ele_displayed(".lemma-summary", timeout=5)
+    parse_baidu(page_title=title, content=page.html)
 
-page.quit()
+    page.quit()
+
+
+def get_url():
+    co = ChromiumOptions()
+    co.set_argument("--disable-blink-features=AutomationControlled")
+    co.set_user_agent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    )
+    page = ChromiumPage(addr_or_opts=co)
+
+    df = pd.read_csv("pedia.csv")
+    df["baidu_url"] = df["baidu_url"].astype(object)
+    try:
+        for index, row in df.iterrows():
+            title = row["title"]
+            idx = row["index"]
+            if idx > 107:
+                page.get(f"https://baike.baidu.com/item/{title}")
+                if page.wait.ele_displayed(".J-lemma-content"):
+                    df.at[index, "baidu_url"] = page.url  # type: ignore
+                else:
+                    print(f"{title}没有相关条目")
+                time.sleep(random.uniform(2, 5))
+    finally:
+        df.to_csv("a.csv", index=False, encoding="utf-8")
+        page.quit()
+
+
+get_url()
