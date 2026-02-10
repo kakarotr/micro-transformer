@@ -8,12 +8,7 @@ from bs4 import BeautifulSoup
 from DrissionPage import ChromiumOptions, ChromiumPage
 from pydantic import TypeAdapter
 
-from corpora.core_knowledge.wiki.entities import (
-    BlockType,
-    SectionBlock,
-    WikiPage,
-    WikiSection,
-)
+from corpora.core.wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
 from utils.db import get_cursor, get_db_conn
 
 ignore_titles = ["人物关系", "注释", "参考资料", "条目合集", "陵寝墓地", "系谱", "主要作品", "相关作品"]

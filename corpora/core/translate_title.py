@@ -10,7 +10,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from corpora.core_knowledge.wiki.utils import get_chunks
+from corpora.core.wiki.utils import get_chunks
 from utils.client import get_deepseek_client
 from utils.db import get_db_conn
 

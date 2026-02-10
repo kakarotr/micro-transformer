@@ -8,12 +8,7 @@ from bs4 import BeautifulSoup
 from DrissionPage import ChromiumOptions, ChromiumPage
 from pydantic import TypeAdapter
 
-from corpora.core_knowledge.wiki.entities import (
-    BlockType,
-    SectionBlock,
-    WikiPage,
-    WikiSection,
-)
+from corpora.core.wiki.entities import BlockType, SectionBlock, WikiPage, WikiSection
 from utils.db import get_cursor
 
 ignore_sections = [

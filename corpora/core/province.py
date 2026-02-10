@@ -14,7 +14,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from corpora.core_knowledge.wiki.entities import SectionBlock, WikiSection
+from corpora.core.wiki.entities import SectionBlock, WikiSection
 from utils.client import get_deepseek_client
 from utils.db import get_db_conn
 

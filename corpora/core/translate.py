@@ -15,8 +15,8 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from corpora.core_knowledge.wiki.entities import WikiSection
-from corpora.core_knowledge.wiki.utils import get_chunks
+from corpora.core.wiki.entities import WikiSection
+from corpora.core.wiki.utils import get_chunks
 from utils.client import (
     get_async_deepseek_client,
     get_async_kimi_client,

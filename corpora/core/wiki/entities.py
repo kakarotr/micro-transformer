@@ -45,7 +45,10 @@ class WikiPage(BaseModel):
         for block in blocks:
             if block.content:
                 if block.type == "text":
-                    contents.append(block.content.strip("\n").replace("\n\n\n\n", "\n\n"))  # type: ignore
+                    if isinstance(block.content, str):
+                        contents.append(block.content.strip("\n").replace("\n\n\n\n", "\n\n"))  # type: ignore
+                    else:
+                        contents.append("\n\n".join(block.content))
                 elif block.type == "table":
                     lines = [f"- {line}" for line in block.content]
                     contents.append("\n".join(lines))

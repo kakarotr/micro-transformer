@@ -2,7 +2,7 @@ import math
 
 import wikipediaapi
 
-from utils.db import get_db_conn
+from corpora.utils.db import get_db_conn
 
 
 def get_wiki(lang: str):
