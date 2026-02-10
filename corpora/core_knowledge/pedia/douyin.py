@@ -1,9 +1,12 @@
+import random
 import re
+import time
 
 import bs4
 import pandas as pd
 from bs4 import BeautifulSoup
 from DrissionPage import ChromiumOptions, ChromiumPage
+from pydantic import TypeAdapter
 
 from corpora.core_knowledge.wiki.entities import (
     BlockType,
@@ -11,9 +14,10 @@ from corpora.core_knowledge.wiki.entities import (
     WikiPage,
     WikiSection,
 )
+from utils.db import get_cursor, get_db_conn
 
-ignore_titles = ["人物关系", "注释", "参考资料", "条目合集", "陵寝墓地", "系谱", "主要作品", "相关作品", "", "", ""]
-fuzzy_titles = ["形象", "守护", "国司", "家族", "纪念"]
+ignore_titles = ["人物关系", "注释", "参考资料", "条目合集", "陵寝墓地", "系谱", "主要作品", "相关作品"]
+fuzzy_titles = ["形象", "守护", "国司", "家族", "纪念", "作品", "艺术", "文艺", "游戏"]
 
 
 def get_url():
@@ -170,15 +174,34 @@ def filter_tag(doc: bs4.BeautifulSoup):
         image.decompose()
 
 
-co = ChromiumOptions()
-co.set_argument("--disable-blink-features=AutomationControlled")
-co.set_user_agent(
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-)
-title = "上杉谦信"
-page = ChromiumPage(addr_or_opts=co)
-page.get("https://www.baike.com/wikiid/7254500383236702265?source=search&anchor=lh5vj4brvaa")
-pedia = parse_douyin(page_title=title, content=page.html)
-if pedia:
-    with open(f"preview/douyin/{title}.md", mode="w", encoding="utf-8") as f:
-        f.write(pedia.merge_sections())
+def fetch_page():
+    with get_cursor(autocommit=True) as cursor:
+        co = ChromiumOptions()
+        co.set_argument("--disable-blink-features=AutomationControlled")
+        co.set_user_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+        )
+        page = ChromiumPage(addr_or_opts=co)
+        adapter = TypeAdapter(list[WikiSection])
+
+        cursor.execute("select id, title, url from pedia_core_corpus where source = 'douyin' and raw_sections is null")
+        rows = cursor.fetchall()
+        try:
+            for id, title, url in rows:
+                page.get(url)
+                pedia = parse_douyin(page_title=title, content=page.html)
+                if pedia:
+                    cursor.execute(
+                        "update pedia_core_corpus set raw_sections = %s where id = %s",
+                        (adapter.dump_json(pedia.sections).decode(), id),
+                    )
+                time.sleep(random.uniform(2, 5))
+        finally:
+            page.quit()
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    fetch_page()

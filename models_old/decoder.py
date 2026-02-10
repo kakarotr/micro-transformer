@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 
-from models.config import ModelConfig
-from models.components.attention import MultiHeadAttention
-from models.components.mlp import MLP
-from models.components.rms import RMSNorm
-from models.utilities.mask.causal_mask import create_causal_mask
-from models.utilities.positional_encoding.rope import Rope
+from models_old.components.attention import MultiHeadAttention
+from models_old.components.mlp import MLP
+from models_old.components.rms import RMSNorm
+from models_old.config import ModelConfig
+from models_old.utilities.mask.causal_mask import create_causal_mask
+from models_old.utilities.positional_encoding.rope import Rope
 
 
 class DecoderLayer(nn.Module):

@@ -17,7 +17,11 @@ from rich.progress import (
 
 from corpora.core_knowledge.wiki.entities import WikiSection
 from corpora.core_knowledge.wiki.utils import get_chunks
-from utils.client import get_async_kimi_client
+from utils.client import (
+    get_async_deepseek_client,
+    get_async_kimi_client,
+    get_deepseek_client,
+)
 from utils.db import get_db_conn
 
 load_dotenv()
@@ -119,7 +123,7 @@ title_prompt = f"""
 
 def translate(n_threads: int):
     chunks = get_chunks(
-        sql="select title, sections, id from wiki_pages where sections is not null and lang = 'ja' and title not in ('北庵法印', '石川久智', '太田牛一', '蒲生貞秀', '宮兼信', '石川伊予守', '坂崎直盛', '後醍院宗重', '結城秀康', '前野景定', '生石治家', '斯波義重', '深谷吉次', '松山城風流合戦', '鎌倉幕府', '武士道', '小田原征伐', '畠山宣意', '市川等長', '陰徳太平記', '鶴岡八幡宮の戦い', '豊臣秀頼')",
+        sql="select title, sections, id from wiki_pages where lang='ja'",
         n_threads=n_threads,
     )
     with Progress(
@@ -151,64 +155,62 @@ def start_translate(chunk, progress, task_id, overall_task):
 
 
 async def thread_coroutine_manager(chunk, progress, task_id, overall_task):
-    results = await process_row(chunk, progress, task_id, overall_task)
-    if results:
-        conn = get_db_conn()
-        conn.autocommit = True
-        cursor = conn.cursor()
-        for item in results:
-            if item:
-                id, data = item
-                cursor.execute("update wiki_pages set sections = %s, lang='zh' where id = %s", (data, id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        progress.update(task_id, description=f"[green]线程已完成[/green]")
+    await process_row(chunk, progress, task_id, overall_task)
+    progress.update(task_id, description=f"[green]线程已完成[/green]")
 
 
 async def process_row(chunk, progress, task_id, overall_task):
-    results = []
-    for row in chunk:
-        page_title, sections, id = row
-        adapter = TypeAdapter(list[WikiSection])
-        try:
-            sections = adapter.validate_python(sections)
-            for section in sections:
-                tasks = []
-                display_title = (page_title[:12] + "...") if len(page_title) > 12 else page_title.ljust(15)
-                progress.update(task_id, description=f"正在翻译: {display_title}")
-                # 翻译标题
-                title = section.title
-                tasks.append(("title", section, llm_translate(type="title", text=title)))
-                # 翻译内容
-                for block in section.blocks:
-                    if block.lang != "zh" and block.content:
-                        if isinstance(block.content, str):
-                            text = block.content
-                        else:
-                            text = "\n".join([f"- {item}" for item in block.content])
-                        tasks.append(("block", block, llm_translate(type="paragraph", text=text)))
-                if tasks:
-                    task_results = await asyncio.gather(*(t[2] for t in tasks))
-                    for (task_type, target_obj, _), result in zip(tasks, task_results):
-                        if task_type == "title":
-                            target_obj.title = result.text
-                        else:
-                            target_obj.lang = "zh"
-                            target_obj.content = result.text
-            results.append((id, adapter.dump_json(sections).decode()))
-        except:
-            error_stack = traceback.format_exc()
-            print(f"{page_title}错误: err: {error_stack}")
-        finally:
-            progress.update(task_id, advance=1)
-            progress.update(overall_task, advance=1)
-    return results
+    conn = get_db_conn()
+    conn.autocommit = True
+    cursor = conn.cursor()
+    try:
+        for row in chunk:
+            page_title, sections, id = row
+            adapter = TypeAdapter(list[WikiSection])
+            try:
+                sections = adapter.validate_python(sections)
+                for section in sections:
+                    tasks = []
+                    display_title = (page_title[:12] + "...") if len(page_title) > 12 else page_title.ljust(15)
+                    progress.update(task_id, description=f"正在翻译: {display_title}")
+                    # 翻译标题
+                    title = section.title
+                    tasks.append(("title", section, llm_translate(type="title", text=title)))
+                    # 翻译内容
+                    for block in section.blocks:
+                        if block.lang != "zh" and block.content:
+                            if isinstance(block.content, str):
+                                text = block.content
+                            else:
+                                text = "\n".join([f"- {item}" for item in block.content])
+                            tasks.append(("block", block, llm_translate(type="paragraph", text=text)))
+                    if tasks:
+                        task_results = await asyncio.gather(*(t[2] for t in tasks))
+                        for (task_type, target_obj, _), result in zip(tasks, task_results):
+                            if task_type == "title":
+                                target_obj.title = result.text
+                            else:
+                                target_obj.lang = "zh"
+                                target_obj.content = result.text
+                cursor.execute(
+                    "update wiki_pages set sections = %s, lang='zh' where id = %s",
+                    (adapter.dump_json(sections).decode(), id),
+                )
+            except:
+                error_stack = traceback.format_exc()
+                print(f"{page_title}错误: err: {error_stack}")
+            finally:
+                progress.update(task_id, advance=1)
+                progress.update(overall_task, advance=1)
+    finally:
+        conn.commit()
+        cursor.close()
+        conn.close()
 
 
 async def llm_translate(type: Literal["title", "paragraph"], text: str):
     async with global_sem:
-        model_name, client = get_async_kimi_client()
+        model_name, client = get_async_deepseek_client()
         response = await client.chat.completions.create(
             model=model_name,
             messages=[

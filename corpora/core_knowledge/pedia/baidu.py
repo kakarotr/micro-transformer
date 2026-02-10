@@ -6,6 +6,7 @@ import bs4
 import pandas as pd
 from bs4 import BeautifulSoup
 from DrissionPage import ChromiumOptions, ChromiumPage
+from pydantic import TypeAdapter
 
 from corpora.core_knowledge.wiki.entities import (
     BlockType,
@@ -13,6 +14,7 @@ from corpora.core_knowledge.wiki.entities import (
     WikiPage,
     WikiSection,
 )
+from utils.db import get_cursor
 
 ignore_sections = [
     "人际关系",
@@ -87,8 +89,6 @@ def parse_baidu(page_title: str, content: str):
     doc = BeautifulSoup(content, "html.parser")
     filter_tag(doc=doc)
     filter_baidu_tag(doc=doc)
-    with open(f"preview/{page_title}.html", mode="w", encoding="utf-8") as f:
-        f.write(doc.prettify())
     pedia_page = WikiPage(title=page_title, category_name="", lang="zh", sections=[])
 
     # 摘要
@@ -170,8 +170,7 @@ def parse_baidu(page_title: str, content: str):
                             block_type="table",
                             content=re.sub(r">\s+<", "><", str(table.find("tbody"))).replace("\n", ""),
                         )
-        with open(f"preview/{page_title}.md", mode="w", encoding="utf-8") as f:
-            f.write(pedia_page.merge_sections())
+        return pedia_page
 
 
 def filter_tag(doc: bs4.BeautifulSoup):
@@ -211,18 +210,6 @@ def filter_baidu_tag(doc: bs4.BeautifulSoup):
             if span.get("class") and any(["bold" in item for item in span.get("class")]):  # type: ignore
                 if span.parent and span.parent.parent and span.parent.parent.name != "li":
                     span.replace_with(f"**{span.get_text(strip=True)}**")
-
-        # for ul in main_doc.find_all("ul", recursive=False):
-        #     if len(ul.find_all(recursive=False)) > 1:
-        #         if is_title(ul.find_previous_sibling()) and is_title(ul.find_next_sibling()):
-        #             ul.find_previous_sibling().decompose()  # type: ignore
-        #         ul.decompose()
-
-        # for ul in main_doc.find_all("ol", recursive=False):
-        #     if len(ul.find_all(recursive=False)) > 1:
-        #         if is_title(ul.find_previous_sibling()) and is_title(ul.find_next_sibling()):
-        #             ul.find_previous_sibling().decompose()  # type: ignore
-        #         ul.decompose()
 
 
 def test():
@@ -266,4 +253,34 @@ def get_url():
         page.quit()
 
 
-get_url()
+def fetch_page():
+    with get_cursor(autocommit=True) as cursor:
+        co = ChromiumOptions()
+        co.set_argument("--disable-blink-features=AutomationControlled")
+        co.set_user_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+        )
+        page = ChromiumPage(addr_or_opts=co)
+        adapter = TypeAdapter(list[WikiSection])
+
+        cursor.execute("select id, title, url from pedia_core_corpus where source = 'baidu' and raw_sections is null")
+        rows = cursor.fetchall()
+        try:
+            for id, title, url in rows:
+                page.get(url)
+                pedia = parse_baidu(page_title=title, content=page.html)
+                if pedia:
+                    cursor.execute(
+                        "update pedia_core_corpus set raw_sections = %s where id = %s",
+                        (adapter.dump_json(pedia.sections).decode(), id),
+                    )
+                time.sleep(random.uniform(2, 5))
+        finally:
+            page.quit()
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    fetch_page()

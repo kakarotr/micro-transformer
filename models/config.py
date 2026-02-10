@@ -1,20 +1,19 @@
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, Field
 
 
-class ModelConfig(BaseModel):
-    vocab_size: int
-    hidden_size: int
-    max_position_embeddings: int
-    num_attention_heads: int
-    num_key_value_heads: int
-    num_hidden_layers: int
-    intermediate_size: int
-    rope_base: int
-    rms_eps: float
-    atten_dropout_prob: float
-    mlp_dropout_prob: float
-    layer_dropout_prob: float
-    emb_dropout_prob: float
+class TransformerConfig(BaseModel):
+    vocab_size: Annotated[int, Field(description="词表大小")]
+    max_position_embeddings: Annotated[int, Field(description="输入序列最大Token长度")]
+    hidden_size: Annotated[int, Field(description="Token维度")]
+    num_layers: Annotated[int, Field(description="隐藏层数量")]
+    num_attention_heads: Annotated[int, Field(description="多头注意力头数")]
+    num_key_value_heads: Annotated[int, Field(description="KV组数")]
+    dropout_prob: Annotated[float, Field(description="Dropout强度")]
+    intermediate_size: Annotated[int, Field(description="多层感知机升维维度")]
+    rms_eps: Annotated[float, Field(description="RMS指数")]
+    rope_base: Annotated[int, Field(description="ROPE旋转基数")]
 
     @property
     def head_dim(self):
