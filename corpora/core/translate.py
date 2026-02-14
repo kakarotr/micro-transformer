@@ -17,15 +17,11 @@ from rich.progress import (
 
 from corpora.core.wiki.entities import WikiSection
 from corpora.core.wiki.utils import get_chunks
-from utils.client import (
-    get_async_deepseek_client,
-    get_async_kimi_client,
-    get_deepseek_client,
-)
-from utils.db import get_db_conn
+from corpora.utils.client import get_async_deepseek_client
+from corpora.utils.db import get_db_conn
 
 load_dotenv()
-global_sem = asyncio.Semaphore(100)
+global_sem = asyncio.Semaphore(500)
 
 
 class Result(BaseModel):
@@ -123,7 +119,7 @@ title_prompt = f"""
 
 def translate(n_threads: int):
     chunks = get_chunks(
-        sql="select title, sections, id from wiki_pages where lang='ja'",
+        sql="select raw_title, sections, id from pedia_core_corpus where lang='ja'",
         n_threads=n_threads,
     )
     with Progress(
@@ -193,7 +189,7 @@ async def process_row(chunk, progress, task_id, overall_task):
                                 target_obj.lang = "zh"
                                 target_obj.content = result.text
                 cursor.execute(
-                    "update wiki_pages set sections = %s, lang='zh' where id = %s",
+                    "update pedia_core_corpus set sections = %s, lang='zh' where id = %s",
                     (adapter.dump_json(sections).decode(), id),
                 )
             except:
@@ -230,4 +226,4 @@ if __name__ == "__main__":
 
     load_dotenv()
 
-    translate(n_threads=5)
+    translate(n_threads=20)

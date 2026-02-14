@@ -10,9 +10,9 @@ from openai import OpenAI
 from pydantic import TypeAdapter
 
 from corpora.core.wiki.utils import get_chunks
-from utils.db import get_db_conn
-from utils.prompt import wiki_rewrite_prompt
-from utils.schemas import WikiListSchema
+from corpora.utils.db import get_db_conn
+from corpora.utils.prompt import wiki_rewrite_prompt
+from corpora.utils.schemas import WikiListSchema
 
 from .entities import SectionBlock, WikiPage, WikiSection
 from .page import WikiPageParser
@@ -98,7 +98,9 @@ special_title = {"宇都宮成綱": ["家臣", "人物・逸話"], "徳川家康
 
 
 def fetch_page(n_threads: int = 10):
-    chunks = get_chunks(sql="select id, title, lang from wiki_pages where raw_sections is null", n_threads=n_threads)
+    chunks = get_chunks(
+        sql="select id, raw_title, lang from pedia_core_corpus where raw_sections is null", n_threads=n_threads
+    )
 
     with ThreadPoolExecutor(max_workers=n_threads) as executor:
         executor.map(process_fetch, chunks)
@@ -114,7 +116,7 @@ def process_fetch(chunk):
             page = parser.parse(page_title=item[1], lang=item[2])
             if page:
                 cursor.execute(
-                    "update wiki_pages set raw_sections = %s where id = %s",
+                    "update pedia_core_corpus set raw_sections = %s where id = %s",
                     (TypeAdapter(list[WikiSection]).dump_json(page.sections).decode(), item[0]),
                 )
                 print(f"{item[1]}处理完成")
@@ -128,7 +130,7 @@ def process_fetch(chunk):
 
 def llm_rewrite(n_threads: int = 10):
     chunks = get_chunks(
-        sql="select id, title, raw_sections from wiki_pages where sections is null",
+        sql="select id, raw_title, raw_sections from pedia_core_corpus where sections is null",
         n_threads=n_threads,
     )
 
@@ -190,7 +192,7 @@ def process_rewrite(chunk):
                         new_section.blocks.append(block)
                 new_sections.append(new_section)
             cursor.execute(
-                "update wiki_pages set sections = %s where id = %s",
+                "update pedia_core_corpus set sections = %s where id = %s",
                 (TypeAdapter(list[WikiSection]).dump_json(new_sections).decode(), item[0]),
             )
             with open(f"preview/{item[1]}.md", mode="w", encoding="utf-8") as f:
@@ -208,4 +210,4 @@ if __name__ == "__main__":
 
     load_dotenv()
 
-    llm_rewrite(n_threads=50)
+    llm_rewrite(n_threads=3)
