@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TransformerConfig(BaseModel):
@@ -15,6 +15,18 @@ class TransformerConfig(BaseModel):
     rms_eps: Annotated[float, Field(description="RMS指数")]
     rope_base: Annotated[int, Field(description="ROPE旋转基数")]
 
-    @property
-    def head_dim(self):
-        return self.hidden_size // self.num_attention_heads
+    @model_validator(mode="after")
+    def validate_model_params(self) -> "TransformerConfig":
+        if self.num_attention_heads == 0:
+            raise ValueError("num_attention_heads cannot be zero")
+        if self.hidden_size % self.num_attention_heads != 0:
+            raise ValueError(
+                f"hidden_size ({self.hidden_size}) must be divisible by "
+                f"num_attention_heads ({self.num_attention_heads})"
+            )
+        if self.num_attention_heads % self.num_key_value_heads != 0:
+            raise ValueError(
+                f"num_attention_heads ({self.num_attention_heads}) must be divisible by "
+                "num_key_value_heads ({self.num_key_value_heads}) to support GQA/MQA."
+            )
+        return self
