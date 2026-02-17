@@ -116,6 +116,15 @@ def clear():
             )
 
 
+def output_article():
+    with get_cursor() as cursor:
+        cursor.execute("select title, content from article_core_corpus")
+        rows = cursor.fetchall()
+        for title, content in rows:
+            with open(f"/Users/linyongjin/Desktop/output/article/{title}.md", mode="w", encoding="utf-8") as f:
+                f.write(content)
+
+
 def output_peida():
     with get_cursor() as cursor:
         cursor.execute(
@@ -124,11 +133,11 @@ def output_peida():
         rows = cursor.fetchall()
         adapter = TypeAdapter(list[WikiSection])
         for title, sections, source in rows:
-            directory = Path(f"output/pedia/{source}")
+            directory = Path(f"/Users/linyongjin/Desktop/output/pedia/{source}")
             if not directory.exists():
                 directory.mkdir()
             sections = adapter.validate_python(sections)
-            with open(f"output/pedia/{source}/{title}.md", mode="w", encoding="utf-8") as f:
+            with open(f"/Users/linyongjin/Desktop/output/pedia/{source}/{title}.md", mode="w", encoding="utf-8") as f:
                 f.write(
                     WikiPage(
                         title=title, category_name="", lang="zh", sections=adapter.validate_python(sections)
@@ -173,5 +182,6 @@ def douyin_test():
     )
     print(remove_pinyin_brackets("由于反织田势力在近畿[jī]与织田家作战失败后逃"))
 
+
 # clear()
-output_peida()
+output_article()
