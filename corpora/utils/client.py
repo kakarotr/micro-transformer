@@ -36,3 +36,10 @@ def get_qwen_client():
     qwen_key = os.environ["QWEN_KEY"]
 
     return "qwen3.5-plus", OpenAI(base_url=qwen_url, api_key=qwen_key)
+
+
+def get_openrouter_client():
+    url = os.environ["OPENROUTER_URL"]
+    key = os.environ["OPENROUTER_KEY"]
+
+    return "google/gemini-3-flash-preview", OpenAI(base_url=url, api_key=key)

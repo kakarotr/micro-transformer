@@ -174,6 +174,3 @@ def merge():
                 "insert into book_core_corpus (title, raw_content, content) values ('日本战国史', %s, %s)",
                 (page.model_dump_json(), page.model_dump_json()),
             )
-
-
-merge()
