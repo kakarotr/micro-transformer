@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from corpora.core.wiki.entities import SectionBlock, WikiPage, WikiSection
-from corpora.utils.client import get_kimi_client, get_qwen_client
+from corpora.utils.client import get_kimi_client, get_openrouter_client, get_qwen_client
 from corpora.utils.db import get_cursor
 
 
@@ -68,35 +68,34 @@ prompt = f"""
 load_dotenv()
 
 
-def ocr():
-    images_path = Path("preview/images")
+def ocr(name):
+    images_path = Path(f"preview/pdf_images/{name}")
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
-        if int(file.stem.split("_")[-1]) >= 546:
-            print(file.stem)
-            with open(str(file.absolute()), "rb") as f:
-                image_data = f.read()
-                base64_bytes = base64.b64encode(image_data)
-                base64_str = base64_bytes.decode("utf-8")
+        print(name, file.stem)
+        with open(str(file.absolute()), "rb") as f:
+            image_data = f.read()
+            base64_bytes = base64.b64encode(image_data)
+            base64_str = base64_bytes.decode("utf-8")
 
-            model_name, client = get_kimi_client()
-            response = client.chat.completions.create(
-                model="kimi-k2.5",
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {
-                        "role": "user",
-                        "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
-                    },
-                ],
-                response_format={"type": "json_object"},
-                temperature=1,
-            )
-            result = response.choices[0].message.content
-            if result:
-                with open(f"preview/jsons/{file.stem}.json", mode="w", encoding="utf-8") as f:
-                    f.write(result)
+        model_name, client = get_openrouter_client()
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
+                },
+            ],
+            response_format={"type": "json_object"},
+            temperature=1,
+        )
+        result = response.choices[0].message.content
+        if result:
+            with open(f"preview/jsons/{name}/{file.stem}.json", mode="w", encoding="utf-8") as f:
+                f.write(result)
 
 
 def parse_header(text):
@@ -174,3 +173,45 @@ def merge():
                 "insert into book_core_corpus (title, raw_content, content) values ('日本战国史', %s, %s)",
                 (page.model_dump_json(), page.model_dump_json()),
             )
+
+
+def a():
+    prefix = "preview/pdf_images/日本战国风云录（上）/page_"
+    test_images = [
+        f"{prefix}28.png",
+    ]
+
+    for idx, item in enumerate(test_images, start=1):
+        with open(item, "rb") as f:
+            print(item)
+            image_data = f.read()
+            base64_bytes = base64.b64encode(image_data)
+            base64_str = base64_bytes.decode("utf-8")
+
+            model_name, client = get_openrouter_client()
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
+                    },
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                extra_body={
+                    "provider": {
+                        "order": ["deepinfra", "together"],
+                        "allow_fallbacks": True,
+                    }
+                },
+            )
+            result = response.choices[0].message.content
+            if result:
+                with open(f"preview/jsons/{idx}.json", mode="w", encoding="utf-8") as f:
+                    f.write(result)
+
+
+for name in ["日本战国风云录（上）"]:
+    ocr(name)

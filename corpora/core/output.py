@@ -1,11 +1,12 @@
 import re
+from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
-from sympy import sec
 
-from corpora.core.wiki.entities import WikiPage, WikiSection
+from corpora.core.wiki.entities import SectionBlock, WikiPage, WikiSection
 from corpora.utils.db import get_cursor
 
 load_dotenv()
@@ -125,6 +126,30 @@ def output_article():
                 f.write(content)
 
 
+def output_book():
+    with get_cursor() as cursor:
+        cursor.execute("select title, content from book_core_corpus order by id")
+        rows = cursor.fetchall()
+        grouped_book = defaultdict[str, list[dict[str, Any]]](list)
+        for title, content in rows:
+            grouped_book[title].append(content)
+        pages: list[WikiPage] = []
+        for title, items in grouped_book.items():
+            pages.append(WikiPage(title=title, category_name="", lang="", sections=[]))
+            if "name" in items[0].keys():
+                for item in items:
+                    pages[-1].sections.append(WikiSection(title=item["name"], level=2, blocks=[]))
+                    for p in item["paragraphs"]:
+                        pages[-1].sections[-1].blocks.append(SectionBlock(type="text", content=p["content"]))
+            else:
+                for item in items:
+                    pages[-1].sections.extend([WikiSection.model_validate(section) for section in item["sections"]])
+
+    for page in pages:
+        with open(f"/Users/linyongjin/Desktop/output/book/{page.title}.md", mode="w", encoding="utf-8") as f:
+            f.write(page.merge_sections())
+
+
 def output_peida():
     with get_cursor() as cursor:
         cursor.execute(
@@ -184,4 +209,4 @@ def douyin_test():
 
 
 # clear()
-output_article()
+output_book()
