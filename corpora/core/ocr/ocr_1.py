@@ -70,9 +70,14 @@ load_dotenv()
 
 def ocr(name):
     images_path = Path(f"preview/pdf_images/{name}")
+    output_path = Path(f"preview/jsons/{name}")
+    if not output_path.exists():
+        output_path.mkdir()
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
+        if int(file.stem.split("_")[-1]) != 667:
+            continue
         print(name, file.stem)
         with open(str(file.absolute()), "rb") as f:
             image_data = f.read()
@@ -135,29 +140,32 @@ def parse_header(text):
     return 0, text
 
 
-def merge():
-    jsons_path = Path("preview/jsons")
+def merge(name):
+    jsons_path = Path(f"preview/jsons/{name}")
     files = [file for file in jsons_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     pages: list[WikiPage] = []
     for file in files:
-        # print(file.stem)
+        print(file.stem)
         with open(file, mode="r", encoding="utf-8") as f:
             result = Result.model_validate_json(f.read())
             for block in result.blocks:
                 if block.type == "title":
+                    if " | " in block.content:
+                        continue
+                    # pages[-1].sections.append(WikiSection(title=block.content, level=2, blocks=[]))
                     level, title = parse_header(text=block.content)
                     if level == 2:
                         pages.append(
                             WikiPage(
-                                title="日本战国史",
+                                title=name,
                                 category_name="",
                                 lang="zh",
                                 sections=[WikiSection(title=title, level=level, blocks=[])],
                             )
                         )
-                    elif level == 3 or level == 4:
-                        pages[-1].sections.append(WikiSection(title=title, level=level, blocks=[]))
+                    else:
+                        pages[-1].sections.append(WikiSection(title=title, level=3, blocks=[]))
                 elif block.type == "paragraph":
                     content = block.content
                     if block.start_with_indent:
@@ -167,11 +175,11 @@ def merge():
 
     with get_cursor() as cursor:
         for idx, page in enumerate(pages, start=1):
-            with open(f"preview/jsons/pages/{idx}.md", mode="w", encoding="utf-8") as f:
+            with open(f"preview/markdown/{name}_{idx}.md", mode="w", encoding="utf-8") as f:
                 f.write(page.merge_sections())
             cursor.execute(
-                "insert into book_core_corpus (title, raw_content, content) values ('日本战国史', %s, %s)",
-                (page.model_dump_json(), page.model_dump_json()),
+                "insert into book_core_corpus (title, raw_content, content) values (%s, %s, %s)",
+                (name, page.model_dump_json(), page.model_dump_json()),
             )
 
 
@@ -213,5 +221,9 @@ def a():
                     f.write(result)
 
 
-for name in ["日本战国风云录（上）"]:
-    ocr(name)
+for name in [
+    "上杉谦信传",
+]:
+    print(name)
+    merge(name=name)
+    # ocr(name=name)

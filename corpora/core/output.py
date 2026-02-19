@@ -128,7 +128,7 @@ def output_article():
 
 def output_book():
     with get_cursor() as cursor:
-        cursor.execute("select title, content from book_core_corpus order by id")
+        cursor.execute("select title, content from book_core_corpus where id >= 3269 order by id")
         rows = cursor.fetchall()
         grouped_book = defaultdict[str, list[dict[str, Any]]](list)
         for title, content in rows:
