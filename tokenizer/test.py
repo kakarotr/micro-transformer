@@ -11,4 +11,20 @@ tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
 #     readable_chunk = tokenizer.decode([token_id])
 #     print(f"ID: {token_id}  ->  {readable_chunk}")
 
-print(tokenizer.encode("关原"))
+for item in [
+    "第一次国府台之战",
+    "第一次国府台合战",
+    "桶狭间之战",
+    "桶狭间合战",
+    "姊川之战",
+    "姊川合战",
+    "长筱之战",
+    "长筱合战",
+    "关原之战",
+    "关原合战",
+    "桶狭间",
+    "姊川",
+    "长筱",
+    "关原",
+]:
+    print(f"{item} - {tokenizer.encode(item)}")
