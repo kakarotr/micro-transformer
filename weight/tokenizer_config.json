@@ -1,0 +1,9 @@
+{
+  "backend": "tokenizers",
+  "bos_token": "<|start_of_sentence|>",
+  "eos_token": "<|end_of_sentence|>",
+  "model_max_length": 2048,
+  "pad_token": "<|pad|>",
+  "tokenizer_class": "Qwen2Tokenizer",
+  "unk_token": "<|unk|>"
+}
