@@ -16,17 +16,8 @@ special_tokens_dict = {
     "eos": AddedToken("<|im_end|>", lstrip=False, rstrip=False, normalized=False, special=True),
 }
 
-special_tokens = {
-    "bos_token": "<|start_of_sentence|>",
-    "eos_token": "<|end_of_sentence|>",
-    "unk_token": "<|unk|>",
-    "pad_token": "<|pad|>",
-}
-
-sft_tokens = ["<|user|>", "<|assistant|>"]
-
 trainer = trainers.BpeTrainer(
-    vocab_size=51200,
+    vocab_size=32768,
     special_tokens=[token.content for token in special_tokens_dict.values()],
     min_frequency=5,
     show_progress=True,
@@ -56,7 +47,7 @@ def get_training_corpus(batch_size: int = 1000):
 
     # MAX_GENERAL_BYTES = 3 * 1024 * 1024 * 1024
     # current_general_bytes = 0
-    # ACCEPTANCE_RATE = 0.08
+    # ACCEPTANCE_RATE = 0.04
 
     # general_dataset = load_dataset("parquet", data_dir="data/common", split="train", streaming=True)
 
@@ -70,7 +61,7 @@ def get_training_corpus(batch_size: int = 1000):
     #     current_general_bytes += text_bytes
 
     #     if current_general_bytes > MAX_GENERAL_BYTES:
-    #         print("\n[成功] 已从全局 Shuffle 的数据中精准提取 5GB，停止读取。")
+    #         print("\n[成功]提取3GB，停止读取。")
     #         break
 
     #     batch.append(text)
@@ -95,8 +86,8 @@ fast_tokenizer = PreTrainedTokenizerFast(
         special_tokens_dict["assistant"],
     ],
     clean_up_tokenization_spaces=False,
-    model_max_length=2048,
+    model_max_length=4096,
 )
 fast_tokenizer.add_bos_token = False
 fast_tokenizer.add_eos_token = False
-fast_tokenizer.save_pretrained("tokenizer/result")
+fast_tokenizer.save_pretrained("weight/b2")

@@ -122,13 +122,13 @@ def output_article():
         cursor.execute("select title, content from article_core_corpus")
         rows = cursor.fetchall()
         for title, content in rows:
-            with open(f"/Users/linyongjin/Desktop/output/article/{title}.md", mode="w", encoding="utf-8") as f:
+            with open(f"data/knowledge/article/{title}.md", mode="w", encoding="utf-8") as f:
                 f.write(content)
 
 
 def output_book():
     with get_cursor() as cursor:
-        cursor.execute("select title, content from book_core_corpus where id >= 3269 order by id")
+        cursor.execute("select title, content from book_core_corpus order by id")
         rows = cursor.fetchall()
         grouped_book = defaultdict[str, list[dict[str, Any]]](list)
         for title, content in rows:
@@ -146,7 +146,7 @@ def output_book():
                     pages[-1].sections.extend([WikiSection.model_validate(section) for section in item["sections"]])
 
     for page in pages:
-        with open(f"/Users/linyongjin/Desktop/output/book/{page.title}.md", mode="w", encoding="utf-8") as f:
+        with open(f"data/knowledge/book/{page.title}.md", mode="w", encoding="utf-8") as f:
             f.write(page.merge_sections())
 
 
@@ -158,11 +158,11 @@ def output_peida():
         rows = cursor.fetchall()
         adapter = TypeAdapter(list[WikiSection])
         for title, sections, source in rows:
-            directory = Path(f"/Users/linyongjin/Desktop/output/pedia/{source}")
+            directory = Path(f"data/knowledge/pedia/{source}")
             if not directory.exists():
                 directory.mkdir()
             sections = adapter.validate_python(sections)
-            with open(f"/Users/linyongjin/Desktop/output/pedia/{source}/{title}.md", mode="w", encoding="utf-8") as f:
+            with open(f"data/knowledge/pedia/{source}/{title}.md", mode="w", encoding="utf-8") as f:
                 f.write(
                     WikiPage(
                         title=title, category_name="", lang="zh", sections=adapter.validate_python(sections)
@@ -209,4 +209,6 @@ def douyin_test():
 
 
 # clear()
+output_peida()
+# output_article()
 output_book()

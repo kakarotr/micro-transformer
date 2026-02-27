@@ -1,30 +1,19 @@
-import jieba
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
+
 # 后世学者对明智光秀发送本能寺之变的原因一直众说纷纭
 # 庆长八年(1603)，德川家康在江户建立幕府，史称江户幕府。
 # 武田信玄在三方原之战中击败了德川家康
-
-# encode_input = tokenizer("")
-# for token_id in encode_input["input_ids"]:  # type: ignore
-#     readable_chunk = tokenizer.decode([token_id])
-#     print(f"ID: {token_id}  ->  {readable_chunk}")
-
+# 你好，请问今天的天气情况怎么样？
 for item in [
-    "第一次国府台之战",
-    "第一次国府台合战",
-    "桶狭间之战",
-    "桶狭间合战",
-    "姊川之战",
-    "姊川合战",
-    "长筱之战",
-    "长筱合战",
-    "关原之战",
-    "关原合战",
-    "桶狭间",
-    "姊川",
-    "长筱",
-    "关原",
+    "今天的天气非常晴朗，我和朋友们打算去公园散步，顺便在附近的餐厅吃午饭。",
+    "人工智能是计算机科学的一个重要分支，近年来在自然语言处理领域取得了显著的进展。",
+    "地球是太阳系八大行星之一，距离太阳约一点五亿公里。",
+    "天正十年，织田信长在京都本能寺遭到家臣明智光秀的背叛，最终被迫自尽，史称本能寺之变。",
+    "丰臣秀吉原名木下藤吉郎，出身贫寒，却凭借出色的才干统一了日本，并在后来就任关白一职。",
+    "关原合战是战国时代末期发生的一场决定性战役，德川家康率领的东军最终击败了石田三成带领的西军，奠定了江户幕府的基础。",
+    "信长将兵出桶狭间，乘雨骤击，大破今川义元，威震天下。",
 ]:
-    print(f"{item} - {tokenizer.encode(item)}")
+    encode_input = tokenizer(item)
+    print([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]])  # type: ignore

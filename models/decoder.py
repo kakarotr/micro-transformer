@@ -112,3 +112,5 @@ class CausalLanguageModel(nn.Module):
 
     def forward(self, input_ids: torch.Tensor):
         hidden_states = self.decoder(input_ids)
+        logits = self.lm_head(hidden_states)
+        return logits

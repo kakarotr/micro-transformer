@@ -1,3 +1,4 @@
+import copy
 from typing import Literal
 
 from pydantic import BaseModel
@@ -42,7 +43,8 @@ class WikiPage(BaseModel):
 
     def _merge_blocks(self, blocks: list[SectionBlock]):
         contents = []
-        for block in blocks:
+        merged_blocks = self._merge_contiguous_lists(data=blocks)
+        for block in merged_blocks:
             if block.content:
                 if block.type == "text":
                     if isinstance(block.content, str):
@@ -66,3 +68,18 @@ class WikiPage(BaseModel):
                         contents.append(content)
 
         return "\n\n".join(contents)
+
+    def _merge_contiguous_lists(self, data: list[SectionBlock]):
+        result: list[SectionBlock] = []
+        if not data:
+            return result
+        current = copy.deepcopy(data[0])
+        for item in data[1:]:
+            if item.type == current.type and item.type in ("ulist", "olist"):
+                current.content.extend(item.content)  # type: ignore
+            else:
+                result.append(current)
+                current = copy.deepcopy(item)
+        if current:
+            result.append(current)
+        return result
