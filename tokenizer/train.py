@@ -1,24 +1,26 @@
 import random
 from pathlib import Path
 
+import tokenizers
 from datasets import load_dataset
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
 from transformers import AddedToken, PreTrainedTokenizerFast
 
-tokenizer = Tokenizer(models.BPE(unk_token="<|unk|>"))
+tokenizer = Tokenizer(models.BPE())
 tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
 tokenizer.decoder = decoders.ByteLevel()
 
 special_tokens_dict = {
-    "pad": AddedToken("<|endoftext|>", lstrip=False, rstrip=False, normalized=False, special=True),
-    "user": AddedToken("<|im_user|>", lstrip=False, rstrip=False, normalized=False, special=True),
-    "assistant": AddedToken("<|im_assistant|>", lstrip=False, rstrip=False, normalized=False, special=True),
-    "eos": AddedToken("<|im_end|>", lstrip=False, rstrip=False, normalized=False, special=True),
+    "pad": "<|endoftext|>",
+    "eos": "<|im_end|>",
+    "system": "<|im_system|>",
+    "user": "<|im_user|>",
+    "assistant": "<|im_assistant|>",
 }
 
 trainer = trainers.BpeTrainer(
-    vocab_size=32768,
-    special_tokens=[token.content for token in special_tokens_dict.values()],
+    vocab_size=10000,
+    special_tokens=list(special_tokens_dict.values()),
     min_frequency=5,
     show_progress=True,
 )
@@ -75,19 +77,25 @@ def get_training_corpus(batch_size: int = 1000):
 
 tokenizer.train_from_iterator(get_training_corpus(), trainer=trainer)
 tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)
+tokenizer.add_special_tokens([tokenizers.AddedToken(t, special=True) for t in special_tokens_dict.values()])
 
 fast_tokenizer = PreTrainedTokenizerFast(
     tokenizer_object=tokenizer,
-    pad_token=special_tokens_dict["pad"],
-    eos_token=special_tokens_dict["eos"],
+    pad_token=AddedToken(special_tokens_dict["pad"], lstrip=False, rstrip=False, normalized=False, special=True),
+    eos_token=AddedToken(special_tokens_dict["eos"], lstrip=False, rstrip=False, normalized=False, special=True),
     bos_token=None,
     additional_special_tokens=[
-        special_tokens_dict["user"],
-        special_tokens_dict["assistant"],
+        AddedToken(special_tokens_dict["user"], lstrip=False, rstrip=False, normalized=False, special=True),
+        AddedToken(special_tokens_dict["assistant"], lstrip=False, rstrip=False, normalized=False, special=True),
+        AddedToken(special_tokens_dict["system"], lstrip=False, rstrip=False, normalized=False, special=True),
     ],
     clean_up_tokenization_spaces=False,
     model_max_length=4096,
 )
 fast_tokenizer.add_bos_token = False
 fast_tokenizer.add_eos_token = False
-fast_tokenizer.save_pretrained("weight/b2")
+
+output_dir = Path("tokenizer/knowledge")
+fast_tokenizer.save_pretrained(output_dir)
+tokenizer.save(str(output_dir / "tokenizer.json"))
+tokenizer.model.save(str(output_dir))

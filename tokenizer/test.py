@@ -1,11 +1,7 @@
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
+tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/common")
 
-# 后世学者对明智光秀发送本能寺之变的原因一直众说纷纭
-# 庆长八年(1603)，德川家康在江户建立幕府，史称江户幕府。
-# 武田信玄在三方原之战中击败了德川家康
-# 你好，请问今天的天气情况怎么样？
 for item in [
     "今天的天气非常晴朗，我和朋友们打算去公园散步，顺便在附近的餐厅吃午饭。",
     "人工智能是计算机科学的一个重要分支，近年来在自然语言处理领域取得了显著的进展。",
