@@ -97,5 +97,3 @@ fast_tokenizer.add_eos_token = False
 
 output_dir = Path("tokenizer/knowledge")
 fast_tokenizer.save_pretrained(output_dir)
-tokenizer.save(str(output_dir / "tokenizer.json"))
-tokenizer.model.save(str(output_dir))
