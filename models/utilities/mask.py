@@ -7,6 +7,3 @@ def create_causal_mask(seq_len: int):
     mask = torch.ones((seq_len, seq_len), dtype=torch.bool)
     mask = torch.triu(mask, diagonal=1)
     return x.masked_fill(mask, float("-inf"))
-
-
-print(create_causal_mask(8))

@@ -1,5 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.components.attention import MultiHeadAttention
 from models.components.mlp import MLP
@@ -96,6 +99,9 @@ class Decoder(nn.Module):
 
 class CausalLanguageModel(nn.Module):
     def __init__(self, config: TransformerConfig):
+        super().__init__()
+        self.num_layers = config.num_layers
+        self.vocab_size = config.vocab_size
         self.decoder = Decoder(
             vocab_size=config.vocab_size,
             max_position_embeddings=config.max_position_embeddings,
@@ -108,9 +114,41 @@ class CausalLanguageModel(nn.Module):
             dropout_prob=config.dropout_prob,
             rope_base=config.rope_base,
         )
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self._init_weights()
 
-    def forward(self, input_ids: torch.Tensor):
+    def _init_weights(self):
+        base_std = 0.02
+        for name, module in self.named_modules():
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                if name.endswith("o_proj") or name.endswith("down_proj"):
+                    scaled_std = base_std / math.sqrt(2 * self.num_layers)
+                    module.weight.data.normal_(mean=0.0, std=scaled_std)
+                else:
+                    module.weight.data.normal_(mean=0.0, std=base_std)
+
+    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor | None = None):
         hidden_states = self.decoder(input_ids)
         logits = self.lm_head(hidden_states)
-        return logits
+        loss = None
+        if labels is not None:
+            shift_logits = logits[:, :-1, :].contiguous().view(-1, self.vocab_size)
+            shift_labels = labels[:, 1:].contiguous().view(-1)
+            loss = F.cross_entropy(shift_logits, shift_labels)
+        return logits, loss
+
+
+CausalLanguageModel(
+    config=TransformerConfig(
+        vocab_size=32768,
+        max_position_embeddings=4096,
+        hidden_size=768,
+        num_layers=1,
+        num_attention_heads=8,
+        num_key_value_heads=8,
+        dropout_prob=0.0,
+        intermediate_size=2050,
+        rms_eps=1e-6,
+        rope_base=10000,
+    )
+)

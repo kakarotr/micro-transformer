@@ -27,7 +27,7 @@ class MultiHeadAttention(nn.Module):
 
         self.q_proj = nn.Linear(self.hidden_size, self.head_dim * self.num_attention_heads, bias=False)
         self.kv_proj = nn.Linear(self.hidden_size, self.head_dim * self.num_key_value_heads * 2, bias=False)
-        self.out_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
 
     def forward(
         self,
@@ -61,7 +61,7 @@ class MultiHeadAttention(nn.Module):
         # context_vectors = atten_probs.matmul(v)
         # context_vectors = context_vectors.flatten(1, 2)
         # context_vectors = context_vectors.reshape(batch_size, seq_len, self.hidden_size)
-        # return self.out_proj(context_vectors)
+        # return self.o_proj(context_vectors)
 
         # Pytorch优化之后的写法, 支持Flash Attention
         q: torch.Tensor = self.rope(q, position_ids)
@@ -80,4 +80,4 @@ class MultiHeadAttention(nn.Module):
             is_causal=mask is None,
         )
         context_vectors = context_vectors.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
-        return self.out_proj(context_vectors)
+        return self.o_proj(context_vectors)

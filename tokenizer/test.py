@@ -1,6 +1,8 @@
+import json
+
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/common")
+tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("charent/ChatLM-mini-Chinese")
 
 for item in [
     "今天的天气非常晴朗，我和朋友们打算去公园散步，顺便在附近的餐厅吃午饭。",
@@ -13,3 +15,11 @@ for item in [
 ]:
     encode_input = tokenizer(item)
     print([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]])  # type: ignore
+
+# with open("tokenizer/keys.txt", mode="w", encoding="utf-8") as f:
+#     for key in tokenizer.get_vocab().keys():
+#         char: str = tokenizer.convert_tokens_to_string([key])
+#         f.write(char)
+#         if len(char) > 3 and (char.endswith("的") or char.endswith("于")):
+#             print(char, tokenizer.encode(char))
+#         f.write("\n")

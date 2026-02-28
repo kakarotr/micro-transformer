@@ -5,7 +5,8 @@
   "eos_token": "<|im_end|>",
   "extra_special_tokens": [
     "<|im_user|>",
-    "<|im_assistant|>"
+    "<|im_assistant|>",
+    "<|im_system|>"
   ],
   "model_max_length": 4096,
   "pad_token": "<|endoftext|>",
