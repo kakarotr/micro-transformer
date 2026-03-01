@@ -2,6 +2,7 @@ import random
 from pathlib import Path
 from typing import Literal
 
+import jieba
 import tokenizers
 from datasets import load_dataset
 from tokenizers import (
@@ -20,6 +21,7 @@ def get_training_corpus(batch_size: int = 1000, domain: Literal["common", "knowl
     batch = []
 
     if domain == "knowledge":
+        # 垂直领域语料
         knowledge_dir = Path("data/knowledge")
         files = [x for x in knowledge_dir.rglob("*.md") if x.is_file()]
 
@@ -38,6 +40,7 @@ def get_training_corpus(batch_size: int = 1000, domain: Literal["common", "knowl
                     yield batch
                     batch = []
     else:
+        # 通用语料
         MAX_GENERAL_BYTES = 4.5 * 1024 * 1024 * 1024
         current_general_bytes = 0
         ACCEPTANCE_RATE = 0.064
@@ -50,6 +53,8 @@ def get_training_corpus(batch_size: int = 1000, domain: Literal["common", "knowl
             text: str = row.get("text", "").strip()  # type: ignore
             if not text:
                 continue
+            words = jieba.lcut(text)
+            processed_line = " ".join(words)
             text_bytes = len(text.encode("utf-8"))
             current_general_bytes += text_bytes
 
@@ -57,7 +62,7 @@ def get_training_corpus(batch_size: int = 1000, domain: Literal["common", "knowl
                 print("\n[成功]采样完成，停止读取。")
                 break
 
-            batch.append(text)
+            batch.append(processed_line)
             if len(batch) == batch_size:
                 yield batch
                 batch = []
@@ -76,13 +81,11 @@ special_tokens_dict = {
 
 
 def train(domain: Literal["common", "knowledge"] = "knowledge"):
+    jieba.initialize()
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [
-            pre_tokenizers.Punctuation(),
-            pre_tokenizers.Split(
-                Regex(r"[的地得了着过在从向对为把被让由自和与及或而就是也都并之于乃将等]"), behavior="isolated"
-            ),
+            pre_tokenizers.Whitespace(),
             pre_tokenizers.ByteLevel(add_prefix_space=False),
         ]
     )
