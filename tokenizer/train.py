@@ -28,6 +28,7 @@ def get_training_corpus(batch_size: int = 1000):
     dataset = load_dataset("parquet", data_files="data/common/4_5/*.parquet", split="train", streaming=True)
     common_texts = []
     for row in dataset:
+        print(f"\r采样进度: {(current_general_bytes / MAX_GENERAL_BYTES) * 100:.2f}%", end="", flush=True)
         if random.random() > ACCEPTANCE_RATE:
             continue
         text: str = row.get("text", "").strip()  # type: ignore
