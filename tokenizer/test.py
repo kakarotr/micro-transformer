@@ -2,7 +2,7 @@ import json
 
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/common")
+tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
 
 common_test_texts = [
     "今天的天气非常晴朗，我和朋友们打算去公园散步，顺便在附近的餐厅吃午饭。",
@@ -38,7 +38,7 @@ knowledge_test_text = [
     "战国大名为了争夺上洛的资格，在各个令制国之间展开了错综复杂的联姻与背叛。",
 ]
 
-for item in common_test_texts:
+for item in knowledge_test_text:
     encode_input = tokenizer(item)
     # print(tokenizer.convert_ids_to_tokens(encode_input["input_ids"]))  # type: ignore
     print([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]])  # type: ignore
