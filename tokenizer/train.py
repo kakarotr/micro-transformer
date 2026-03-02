@@ -5,15 +5,7 @@ from typing import Literal
 import jieba
 import tokenizers
 from datasets import load_dataset
-from tokenizers import (
-    Regex,
-    Tokenizer,
-    decoders,
-    models,
-    pre_tokenizers,
-    processors,
-    trainers,
-)
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
 from transformers import AddedToken, PreTrainedTokenizerFast
 
 
@@ -77,19 +69,18 @@ special_tokens_dict = {
 }
 
 
-def train(domain: Literal["common", "knowledge"] = "knowledge"):
+def train():
     jieba.initialize()
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [
-            pre_tokenizers.Whitespace(),
             pre_tokenizers.ByteLevel(add_prefix_space=False),
         ]
     )
     tokenizer.decoder = decoders.ByteLevel()
 
     trainer = trainers.BpeTrainer(
-        vocab_size=10000 if domain == "knowledge" else 26000,
+        vocab_size=32768,
         special_tokens=list(special_tokens_dict.values()),
         min_frequency=5,
         show_progress=True,
@@ -115,10 +106,10 @@ def train(domain: Literal["common", "knowledge"] = "knowledge"):
     fast_tokenizer.add_eos_token = False
     fast_tokenizer._tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)  # type: ignore
 
-    output_dir = Path("tokenizer/knowledge" if domain == "knowledge" else "tokenizer")
+    output_dir = Path("weight")
     if not output_dir.exists():
         output_dir.mkdir()
     fast_tokenizer.save_pretrained(output_dir)
 
 
-train(domain="knowledge")
+train()
