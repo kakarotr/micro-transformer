@@ -1,8 +1,6 @@
 import random
 from pathlib import Path
-from typing import Literal
 
-import jieba
 import tokenizers
 from datasets import load_dataset
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
@@ -70,10 +68,11 @@ special_tokens_dict = {
 
 
 def train():
-    jieba.initialize()
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [
+            pre_tokenizers.Punctuation(),
+            # pre_tokenizers.Split(r"(的|着|于|被|把|让|呢|吗|吧|啊|嗯)", behavior="isolated"),
             pre_tokenizers.ByteLevel(add_prefix_space=False),
         ]
     )
@@ -84,6 +83,7 @@ def train():
         special_tokens=list(special_tokens_dict.values()),
         min_frequency=5,
         show_progress=True,
+        initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     )
 
     tokenizer.train_from_iterator(get_training_corpus(), trainer=trainer)
