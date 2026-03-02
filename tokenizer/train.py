@@ -17,58 +17,55 @@ from tokenizers import (
 from transformers import AddedToken, PreTrainedTokenizerFast
 
 
-def get_training_corpus(batch_size: int = 1000, domain: Literal["common", "knowledge"] = "knowledge"):
-    batch = []
-
-    if domain == "knowledge":
-        # 垂直领域语料
-        knowledge_dir = Path("data/knowledge")
-        files = [x for x in knowledge_dir.rglob("*.md") if x.is_file()]
-
-        knowledge_texts = []
-
-        for file in files:
-            with open(file, mode="r", encoding="utf-8") as f:
-                content = f.read().strip()
+def get_training_corpus(batch_size: int = 1000):
+    # 处理核心知识, 每个文件加20次等于向上采样20次
+    knowledge_dir = Path("data/knowledge")
+    files = [x for x in knowledge_dir.rglob("*.md") if x.is_file()]
+    knowledge_texts = []
+    for file in files:
+        with open(file, mode="r", encoding="utf-8") as f:
+            for line in f:
+                content = line.strip()
                 if content:
-                    knowledge_texts.append(content)
+                    for _ in range(20):
+                        knowledge_texts.append(content)
 
-        for _ in range(1):
-            for text in knowledge_texts:
-                batch.append(text)
-                if len(batch) == batch_size:
-                    yield batch
-                    batch = []
-    else:
-        # 通用语料
-        MAX_GENERAL_BYTES = 4.5 * 1024 * 1024 * 1024
-        current_general_bytes = 0
-        ACCEPTANCE_RATE = 0.064
+    # 处理通用语料
+    MAX_GENERAL_BYTES = 5 * 1024 * 1024 * 1024
+    ACCEPTANCE_RATE = 0.07
+    current_general_bytes = 0
 
-        general_dataset = load_dataset("parquet", data_dir="/data/common/4_5", split="train", streaming=True)
+    dataset = load_dataset("parquet", data_files="data/common/4_5/*.parquet", split="train", streaming=True)
+    common_texts = []
+    for row in dataset:
+        if random.random() > ACCEPTANCE_RATE:
+            continue
+        text: str = row.get("text", "").strip()  # type: ignore
 
-        for row in general_dataset:
-            if random.random() > ACCEPTANCE_RATE:
-                continue
-            text: str = row.get("text", "").strip()  # type: ignore
-            if not text:
-                continue
-            words = jieba.lcut(text)
-            processed_line = " ".join(words)
-            text_bytes = len(text.encode("utf-8"))
-            current_general_bytes += text_bytes
+        if not text:
+            continue
 
-            if current_general_bytes > MAX_GENERAL_BYTES:
-                print("\n[成功]采样完成，停止读取。")
-                break
+        text_bytes = len(text.encode("utf-8"))
+        current_general_bytes += text_bytes
+        common_texts.append(text)
 
-            batch.append(processed_line)
-            if len(batch) == batch_size:
-                yield batch
-                batch = []
+        if current_general_bytes > MAX_GENERAL_BYTES:
+            print("\n[成功]通用数据采样完成，停止读取。")
+            break
 
+    texts = [*knowledge_texts, *common_texts]
+    random.shuffle(texts)
+    print("\n数据打乱完毕，准备开始训练")
+
+    batch = []
+    for text in texts:
+        batch.append(text)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
     if batch:
         yield batch
+    print("\n数据提供完毕")
 
 
 special_tokens_dict = {
@@ -98,7 +95,7 @@ def train(domain: Literal["common", "knowledge"] = "knowledge"):
         show_progress=True,
     )
 
-    tokenizer.train_from_iterator(get_training_corpus(domain=domain), trainer=trainer)
+    tokenizer.train_from_iterator(get_training_corpus(), trainer=trainer)
     tokenizer.add_special_tokens([tokenizers.AddedToken(t, special=True) for t in special_tokens_dict.values()])
 
     fast_tokenizer = PreTrainedTokenizerFast(
