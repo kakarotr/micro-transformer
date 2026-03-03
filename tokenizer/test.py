@@ -42,11 +42,3 @@ for item in knowledge_test_text:
     encode_input = tokenizer(item)
     # print(tokenizer.convert_ids_to_tokens(encode_input["input_ids"]))  # type: ignore
     print([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]])  # type: ignore
-
-# with open("tokenizer/keys.txt", mode="w", encoding="utf-8") as f:
-#     for key in tokenizer.get_vocab().keys():
-#         char: str = tokenizer.convert_tokens_to_string([key])
-#         f.write(char)
-#         # if len(char) > 3 and (char.endswith("的") or char.endswith("于")):
-#         #     print(char, tokenizer.encode(char))
-#         f.write("\n")

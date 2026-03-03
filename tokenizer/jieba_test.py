@@ -1,4 +1,14 @@
+import sys
+
 import jieba
 
-for item in jieba.lcut("这里是一段包含\n换行符、\t制表符，以及    多个连续全角和半角空格的文本。"):
-    print(item)
+with open("tokenizer/jieba_words.txt", mode="r", encoding="utf-8") as f:
+    words = []
+    for line in f.readlines():
+        words.append(line.strip())
+
+arg = sys.argv[1]
+jieba.initialize()
+for word in words:
+    jieba.add_word(word=word)
+print(jieba.lcut(arg))
