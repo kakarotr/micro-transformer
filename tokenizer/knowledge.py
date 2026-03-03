@@ -116,6 +116,7 @@ def print_keys():
     ]
     action_suffixs = ["是", "有", "说", "击", "杀", "攻", "守", "战", "灭", "败", "退"]
     city_suffixs = ["城", "府", "馆"]
+    # "鸟取", 鸟取城
     # prefixs = ["在", "于", "从", "向", "对", "与", "和", "同", "被", "将", "由", "为"]
     for item in city_suffixs:
         print(f"{'-' * 5}{item}{'-' * 5}")
