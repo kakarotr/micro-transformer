@@ -55,4 +55,4 @@ def get_jieba_pre_tokenizer():
 
 
 _, tokenizer = get_jieba_pre_tokenizer()
-print(tokenizer.lcut("德川家康与武田信玄"))
+print(tokenizer.lcut("在各个令制国之间展开"))
