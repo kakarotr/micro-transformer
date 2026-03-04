@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import jieba
 import tokenizers
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
 from transformers import AddedToken, AutoTokenizer, PreTrainedTokenizerFast
@@ -85,13 +86,11 @@ def output_keys():
             f.write("\n")
 
 
-with open("tokenizer/jieba_words.txt", mode="r", encoding="utf-8") as f:
-    words = []
-    for line in f.readlines():
-        words.append(line.strip())
-
-
 def print_keys():
+    with open("tokenizer/jieba_words.txt", mode="r", encoding="utf-8") as f:
+        words = []
+        for line in f.readlines():
+            words.append(line.strip())
     tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/knowledge")
     tokens = [tokenizer.convert_tokens_to_string([key]) for key in tokenizer.get_vocab().keys()]
     suffixs = [
@@ -143,7 +142,54 @@ def distinst_words():
             f.write("\n")
 
 
+def add_del_words():
+    sengoku_suffixes = ["军", "家", "氏", "势", "党", "众", "城", "国", "守", "殿"]
+    danger_particles = [
+        "中",
+        "内",
+        "外",
+        "上",
+        "下",
+        "里",
+        "前",
+        "后",
+        "在",
+        "与",
+        "和",
+        "同",
+        "对",
+        "向",
+        "由",
+        "从",
+        "的",
+        "了",
+        "着",
+        "过",
+        "地",
+        "得",
+        "必",
+        "将",
+        "多",
+        "也",
+        "都",
+        "却",
+        "就",
+    ]
+    block_count = 0
+    del_words = []
+    for suffix in sengoku_suffixes:
+        for particle in danger_particles:
+            del_words.append(suffix + particle)
+            # jieba.suggest_freq((suffix, particle), True)
+            # block_count += 1
+    with open("tokenizer/jieba/jieba_del_words2.txt", mode="w+", encoding="utf-8") as f:
+        for words in del_words:
+            f.write(words)
+            f.write("\n")
+
+
 # train()
 # output_keys()
 # print_keys()
-distinst_words()
+# distinst_words()
+add_del_words()
