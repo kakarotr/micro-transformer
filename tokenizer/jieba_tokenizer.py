@@ -43,7 +43,7 @@ def get_jieba_pre_tokenizer():
     knowledge_pre_tokenizer.initialize()
     with open("tokenizer/jieba/jieba_add_words.txt", mode="r", encoding="utf-8") as f:
         for line in f.readlines():
-            knowledge_pre_tokenizer.add_word(line, freq=20000)
+            knowledge_pre_tokenizer.add_word(line.strip(), freq=20000)
     for suffix in sengoku_suffixes:
         for particle in danger_particles:
             knowledge_pre_tokenizer.suggest_freq((suffix, particle), True)
@@ -52,3 +52,7 @@ def get_jieba_pre_tokenizer():
     common_pre_tokenizer.initialize()
 
     return common_pre_tokenizer, knowledge_pre_tokenizer
+
+
+_, tokenizer = get_jieba_pre_tokenizer()
+print(tokenizer.lcut("德川家康与武田信玄"))
