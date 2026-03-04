@@ -17,7 +17,6 @@ def get_training_corpus(pre_tokenizer: jieba.Tokenizer, batch_size: int = 1000):
             for line in f:
                 content = line.strip()
                 if content:
-                    print(" ".join(pre_tokenizer.lcut(content)))
                     batch.append(" ".join(pre_tokenizer.lcut(content)))
                     if len(batch) == batch_size:
                         yield batch
