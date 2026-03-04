@@ -129,8 +129,21 @@ def print_keys():
         print(f"{'-' * 5}{item}{'-' * 5}")
 
 
+def distinst_words():
+    s = set()
+    o = []
+    with open("tokenizer/jieba_words.txt", mode="r", encoding="utf-8") as f:
+        for line in f.readlines():
+            if line not in s:
+                o.append(line)
+                s.add(line)
+    with open("tokenizer/jieba_words2.txt", mode="w+", encoding="utf-8") as f:
+        for item in o:
+            f.write(item.strip("\n"))
+            f.write("\n")
+
+
 # train()
 # output_keys()
-print_keys()
-# jieba.initialize()
-# print(jieba.lcut("北部的"))
+# print_keys()
+distinst_words()
