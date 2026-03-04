@@ -5,8 +5,10 @@ import tokenizers
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
 from transformers import AddedToken, AutoTokenizer, PreTrainedTokenizerFast
 
+from tokenizer.jieba_tokenizer import get_jieba_pre_tokenizer
 
-def get_training_corpus(batch_size: int = 1000):
+
+def get_training_corpus(pre_tokenizer: jieba.Tokenizer, batch_size: int = 1000):
     batch = []
     knowledge_dir = Path("data/knowledge")
     files = [x for x in knowledge_dir.rglob("*.md") if x.is_file()]
@@ -15,7 +17,8 @@ def get_training_corpus(batch_size: int = 1000):
             for line in f:
                 content = line.strip()
                 if content:
-                    batch.append(content)
+                    print(" ".join(pre_tokenizer.lcut(content)))
+                    batch.append(" ".join(pre_tokenizer.lcut(content)))
                     if len(batch) == batch_size:
                         yield batch
                         batch = []
@@ -34,9 +37,11 @@ special_tokens_dict = {
 
 
 def train():
+    _, knowledge_pre_tokenizer = get_jieba_pre_tokenizer()
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [
+            pre_tokenizers.Whitespace(),
             pre_tokenizers.Punctuation(),
             pre_tokenizers.ByteLevel(add_prefix_space=False),
         ]
@@ -51,7 +56,7 @@ def train():
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     )
 
-    tokenizer.train_from_iterator(get_training_corpus(), trainer=trainer)
+    tokenizer.train_from_iterator(get_training_corpus(knowledge_pre_tokenizer), trainer=trainer)
     tokenizer.add_special_tokens([tokenizers.AddedToken(t, special=True) for t in special_tokens_dict.values()])
 
     fast_tokenizer = PreTrainedTokenizerFast(
@@ -188,8 +193,8 @@ def add_del_words():
             f.write("\n")
 
 
-# train()
+train()
 # output_keys()
 # print_keys()
 # distinst_words()
-add_del_words()
+# add_del_words()

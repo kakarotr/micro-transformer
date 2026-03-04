@@ -2,7 +2,7 @@ import json
 
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
+tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/knowledge")
 
 common_test_texts = [
     "今天的天气非常晴朗，我和朋友们打算去公园散步，顺便在附近的餐厅吃午饭。",
