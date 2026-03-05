@@ -5,7 +5,15 @@ from pathlib import Path
 
 import tokenizers
 from datasets import load_dataset
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
+from tokenizers import (
+    Regex,
+    Tokenizer,
+    decoders,
+    models,
+    pre_tokenizers,
+    processors,
+    trainers,
+)
 from transformers import AddedToken, PreTrainedTokenizerFast
 
 from tokenizer.jieba_tokenizer import get_jieba_pre_tokenizer
@@ -64,7 +72,7 @@ def get_training_corpus(batch_size: int = 5000):
     texts_buffer = []
     futures = []
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=46) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=150, initializer=init_worker) as executor:
         for row in dataset:
             if current_general_bytes > MAX_GENERAL_BYTES:
                 print("\n[成功] 通用数据采样完成，停止读取。")
@@ -110,18 +118,20 @@ special_tokens_dict = {
 
 
 def train():
+    vocab_size = 32768
+    add_tokens = ["\n\n", "  ", "   ", "    "]
+
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [
-            pre_tokenizers.Punctuation(),
-            # pre_tokenizers.Split(r"(的|着|于|被|把|让|呢|吗|吧|啊|嗯)", behavior="isolated"),
+            pre_tokenizers.Split(Regex(MAGIC_SEP), behavior="removed"),
             pre_tokenizers.ByteLevel(add_prefix_space=False),
         ]
     )
     tokenizer.decoder = decoders.ByteLevel()
 
     trainer = trainers.BpeTrainer(
-        vocab_size=32768,
+        vocab_size=vocab_size - len(add_tokens),
         special_tokens=list(special_tokens_dict.values()),
         min_frequency=5,
         show_progress=True,
@@ -146,12 +156,16 @@ def train():
     )
     fast_tokenizer.add_bos_token = False
     fast_tokenizer.add_eos_token = False
+    fast_tokenizer.add_tokens(add_tokens)
     fast_tokenizer._tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)  # type: ignore
+
+    current_size = len(fast_tokenizer)
+    if current_size < vocab_size:
+        pad_count = vocab_size - current_size
+        dummy_tokens = [f"<|dummy_{i}|>" for i in range(pad_count)]
+        fast_tokenizer.add_tokens(dummy_tokens)
 
     output_dir = Path("weight")
     if not output_dir.exists():
         output_dir.mkdir()
     fast_tokenizer.save_pretrained(output_dir)
-
-
-train()

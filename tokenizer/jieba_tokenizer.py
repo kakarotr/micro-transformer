@@ -55,7 +55,3 @@ def get_jieba_pre_tokenizer():
     common_pre_tokenizer.initialize()
 
     return common_pre_tokenizer, knowledge_pre_tokenizer
-
-
-# _, t = get_jieba_pre_tokenizer()
-# print(t.lcut("山城"))
