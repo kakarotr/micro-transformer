@@ -5,7 +5,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast
 from tokenizer.jieba_tokenizer import get_jieba_pre_tokenizer
 
 _, pre_tokenizer = get_jieba_pre_tokenizer()
-tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/knowledge")
+tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
 
 common_test_texts = [
     "今天的天气非常晴朗，我和朋友们打算去公园散步，顺便在附近的餐厅吃午饭。",
@@ -118,8 +118,6 @@ markdown_texts = [
 
 for lst in [knowledge_test_text, text_2, scenario_1, scenario_2, scenario_3, scenario_4, scenario_5, scenario_6]:
     for item in lst:
-        # print(repr(item))
-        # print("----------")
         encode_input = tokenizer(item)
         print("|".join([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]]))  # type: ignore
 print("=" * 10)
@@ -128,3 +126,34 @@ for item in markdown_texts:
     print("----------")
     encode_input = tokenizer(item)
     print(repr("|".join([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]])))  # type: ignore
+print("=" * 10)
+test_sentences = [
+    # ================= 战国核心领域测试 =================
+    "第六天魔王织田信长在桶狭间之战中奇袭了今川义元，从此名震天下。",
+    "丰臣秀吉先后颁布了太阁检地与刀狩令，彻底加速了日本兵农分离的进程。",
+    "真田信繁（幸村）在大坂夏之阵中率领赤备突击德川家康的本阵，被誉为日本第一兵。",
+    "武田信玄与上杉谦信在川中岛进行了五次龙争虎斗，留下了无数传说。",
+    "毛利元就以吉田郡山城为据点，通过谋略与暗杀，逐渐统一了中国地方的十多个令制国。",
+    "斋藤道三曾以稻叶山城为大本营，最终却在长良川之战中被儿子斋藤义龙击败。",
+    "伴随着应仁之乱的爆发，室町幕府的权威彻底扫地，日本进入了残酷的下克上时代。",
+    "德川四天王之一的本多忠胜，一生参与了五十七次合战，竟然未曾受过一次伤。",
+    "伊达政宗虽然在奥州迅速崛起，但因为距离京都太远，遗憾错失了争夺天下人的良机。",
+    "各大名为了扩张领地，不仅制定了严格的分国法，还积极推行乐市乐座以繁荣城下町的经济。",
+    "羽柴秀吉在山崎之战中讨伐了逆臣明智光秀，随后在清洲会议上确立了织田政权的继承权。",
+    "面对包围网，信长毅然下令火烧比叡山延历寺，彻底粉碎了宗教势力对世俗大名的干预。",
+    # ================= 现代通用语料测试 =================
+    "人工智能技术的大规模应用，正在深刻改变现代社会的经济结构与底层就业模式。",
+    "今天晚上的晚霞非常美丽，我们打算周末去郊外的山城吃一顿正宗的重庆老火锅。",
+    "在深度学习预训练中，Tokenizer的词表大小通常会设置为64或128的倍数以对齐GPU算力。",
+    "根据公司发布的2026年最新财报数据显示，本季度的总营收同比增长了约15.3%。",
+    "Python的异步编程模型asyncio和多进程ProcessPoolExecutor都能显著提升程序的并发性能。",
+    "这家新开的独立咖啡馆不仅环境极其优雅，而且为顾客提供免费的高速Wi-Fi和电源插座。",
+    "经过长达六个小时的高铁旅程，我们终于抵达了这座充满历史文化底蕴的南方古城。",
+    "宇宙大爆炸理论是目前天体物理学界用来解释宇宙早期演化与起源的最主流的科学假说。",
+    "我的智能手机电池健康度已经下降到了百分之八十以下，需要尽快去官方售后中心更换零组件。",
+    "明天早上的项目进度复盘会议推迟到了十点半，请各个研发小组提前准备好相关的PPT文档。",
+    "作为一名资深的软件开发者，他极其看重代码的鲁棒性以及微服务架构的高可用性设计。",
+]
+for item in test_sentences:
+    encode_input = tokenizer(item)
+    print("|".join([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]]))  # type: ignore
