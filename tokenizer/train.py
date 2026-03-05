@@ -72,7 +72,7 @@ def get_training_corpus(batch_size: int = 5000):
     texts_buffer = []
     futures = []
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=150, initializer=init_worker) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=46, initializer=init_worker) as executor:
         for row in dataset:
             if current_general_bytes > MAX_GENERAL_BYTES:
                 print("\n[成功] 通用数据采样完成，停止读取。")
