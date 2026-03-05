@@ -2,10 +2,22 @@ from pathlib import Path
 
 import jieba
 import tokenizers
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
+from tokenizers import (
+    Regex,
+    Tokenizer,
+    decoders,
+    models,
+    pre_tokenizers,
+    processors,
+    trainers,
+)
 from transformers import AddedToken, AutoTokenizer, PreTrainedTokenizerFast
 
 from tokenizer.jieba_tokenizer import get_jieba_pre_tokenizer
+
+MAGIC_SEP = chr(31)
+
+add_tokens = ["\n\n", "  ", "   ", "    "]
 
 
 def get_training_corpus(pre_tokenizer: jieba.Tokenizer, batch_size: int = 1000):
@@ -14,13 +26,13 @@ def get_training_corpus(pre_tokenizer: jieba.Tokenizer, batch_size: int = 1000):
     files = [x for x in knowledge_dir.rglob("*.md") if x.is_file()]
     for file in files:
         with open(file, mode="r", encoding="utf-8") as f:
-            for line in f:
-                content = line.strip()
-                if content:
-                    batch.append(" ".join(pre_tokenizer.lcut(content)))
-                    if len(batch) == batch_size:
-                        yield batch
-                        batch = []
+            content = f.read()
+            if content:
+                processed_text = MAGIC_SEP.join(pre_tokenizer.lcut(content))
+                batch.append(processed_text)
+                if len(batch) == batch_size:
+                    yield batch
+                    batch = []
     if batch:
         yield batch
     print("\n数据提供完毕")
@@ -40,15 +52,14 @@ def train():
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [
-            pre_tokenizers.Whitespace(),
-            pre_tokenizers.Punctuation(),
+            pre_tokenizers.Split(Regex(MAGIC_SEP), behavior="removed"),
             pre_tokenizers.ByteLevel(add_prefix_space=False),
         ]
     )
     tokenizer.decoder = decoders.ByteLevel()
 
     trainer = trainers.BpeTrainer(
-        vocab_size=8000,
+        vocab_size=8000 - len(add_tokens),
         special_tokens=list(special_tokens_dict.values()),
         min_frequency=5,
         show_progress=True,
@@ -73,6 +84,7 @@ def train():
     )
     fast_tokenizer.add_bos_token = False
     fast_tokenizer.add_eos_token = False
+    fast_tokenizer.add_tokens(add_tokens)
     fast_tokenizer._tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)  # type: ignore
 
     output_dir = Path("tokenizer/knowledge")
@@ -132,68 +144,4 @@ def print_keys():
         print(f"{'-' * 5}{item}{'-' * 5}")
 
 
-def distinst_words():
-    s = set()
-    o = []
-    with open("tokenizer/jieba_words.txt", mode="r", encoding="utf-8") as f:
-        for line in f.readlines():
-            if line not in s:
-                o.append(line)
-                s.add(line)
-    with open("tokenizer/jieba_words2.txt", mode="w+", encoding="utf-8") as f:
-        for item in o:
-            f.write(item.strip("\n"))
-            f.write("\n")
-
-
-def add_del_words():
-    sengoku_suffixes = ["军", "家", "氏", "势", "党", "众", "城", "国", "守", "殿"]
-    danger_particles = [
-        "中",
-        "内",
-        "外",
-        "上",
-        "下",
-        "里",
-        "前",
-        "后",
-        "在",
-        "与",
-        "和",
-        "同",
-        "对",
-        "向",
-        "由",
-        "从",
-        "的",
-        "了",
-        "着",
-        "过",
-        "地",
-        "得",
-        "必",
-        "将",
-        "多",
-        "也",
-        "都",
-        "却",
-        "就",
-    ]
-    block_count = 0
-    del_words = []
-    for suffix in sengoku_suffixes:
-        for particle in danger_particles:
-            del_words.append(suffix + particle)
-            # jieba.suggest_freq((suffix, particle), True)
-            # block_count += 1
-    with open("tokenizer/jieba/jieba_del_words2.txt", mode="w+", encoding="utf-8") as f:
-        for words in del_words:
-            f.write(words)
-            f.write("\n")
-
-
 train()
-# output_keys()
-# print_keys()
-# distinst_words()
-# add_del_words()

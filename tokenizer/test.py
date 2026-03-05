@@ -2,6 +2,9 @@ import json
 
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
+from tokenizer.jieba_tokenizer import get_jieba_pre_tokenizer
+
+_, pre_tokenizer = get_jieba_pre_tokenizer()
 tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("tokenizer/knowledge")
 
 common_test_texts = [
@@ -44,8 +47,83 @@ text_2 = [
     "镇压了一向一揆后，他在领地内推行乐市乐座，后来以关白的身份颁布惣无事令，确立了武家对公家的绝对优势。",
     "室町幕府的管领与九州探题相继失势，各地守护大名纷纷隐居，由年轻的家督接班，这是一个用武力夺取贯高与领地下克上的时代。",
 ]
+scenario_1 = [
+    "现代人的本能是追求更好的生活，这是中国经济发展的重要原因。",
+    "去重庆旅游一定要去看看那里的山城夜景，吃一吃正宗的火锅。",
+    "遇到危险时，动物的本能反应是逃跑，这在中国的偏远山区很常见。",
+]
+scenario_2 = [
+    "织田信长的野望是上洛，在桶狭间之战中击败了今川义元，随后与武田军交战。",
+    "丰臣秀吉的军队向小田原城进发，对北条家形成了巨大的包围网。",
+    "德川家康在关原之战后，确立了江户幕府的统治基础，将领地分封给有功的家臣。",
+]
+scenario_3 = [
+    "织田信长与德川家康结成了同盟，而尼子胜久和长宗我部盛亲则在各地苦战。",
+    "武田信玄病逝后，武田胜赖未能维持家族霸权，最终被织田家消灭。",
+    "上杉谦信的义理让他在战国独树一帜，但上杉景胜却在关原之战中选错了阵营。",
+]
+scenario_4 = [
+    "室町幕府的权威衰落后，各地守护大名纷纷崛起，为了争夺家督之位开启了下克上的时代。",
+    "他被朝廷任命为关白，不仅掌握了天下的政权，还大量没收了国人众的万石领地。",
+    "征夷大将军的头衔不仅是荣誉，更是统领全日本武士的合法法理依据。",
+]
+scenario_5 = [
+    "信长从尾张国出兵，放弃了清洲城，将本城迁往岐阜城。他在山城国建立了政权。",
+    "丰臣军未能立刻攻克关东的忍城与吉田郡山城，最终只得退回浓州休整。",
+    "越前国的朝仓家在稻叶山城陷落后感到了危机，急忙修缮了自家的一乘谷城。",
+]
+scenario_6 = [
+    "武田军的赤备骑兵遭遇了织田家和德川氏的铁炮队，上杉势也在越后按兵不动。",
+    "毛利军在水战中击败了尼子氏的残余势力，巩固了毛利家在中国地方的霸权。",
+    "岛津势在九州的扩张引起了丰臣秀吉的警觉，最终导致了九州征伐的爆发。",
+]
 
-for item in text_2:
+markdown_texts = [
+    """# 日本战国时代：乱世与统一的进程
+
+**日本战国时代**（1467年—1615年）是日本历史上最动荡、也最富有传奇色彩的时期。
+
+## 战国三杰
+这三位大名先后接力，最终完成了日本的统一大业。
+
+### 织田信长
+被称为“**第六天魔王**”，是打破旧秩序的先驱。
+- **天下布武**：确立了武力统一全国的纲领。
+- **长篠之战**：利用三段击战术击败了号称无敌的武田胜赖骑兵。
+
+### 丰臣秀吉
+从一介草鞋侍从晋升为“**关白**”，完成了形式上的全国统一。
+1. **太阁检地**：重新丈量全国土地，确立石高制。
+2. **刀狩令**：没收民间的武器，实现兵农分离。
+
+## 影响深远的关键战役
+
+### 关原之战 (1600年)
+这场战役被誉为“**决定天下的战争**”，标志着德川家康统治时代的到来。
+
+#### 交战双方
+- **东军**：以**德川家康**为首的诸侯。
+- **西军**：以**石田三成**为首，名义上维护丰臣政权的诸侯。
+
+#### 战争结果
+德川家康获得压倒性胜利，随后建立了**江户幕府**。
+
+### 大坂之阵 (1614年-1615年)
+这是战国时代最后的余晖，彻底终结了丰臣氏的统治。
+- **真田信繁**（幸村）：在战役中表现英勇，被称为“**日本第一兵**”。
+- **元和偃武**：战后日本进入了长达两百多年的和平时期。
+"""
+]
+
+for lst in [knowledge_test_text, text_2, scenario_1, scenario_2, scenario_3, scenario_4, scenario_5, scenario_6]:
+    for item in lst:
+        # print(repr(item))
+        # print("----------")
+        encode_input = tokenizer(item)
+        print("|".join([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]]))  # type: ignore
+print("=" * 10)
+for item in markdown_texts:
+    print(repr(item))
+    print("----------")
     encode_input = tokenizer(item)
-    # print(tokenizer.convert_ids_to_tokens(encode_input["input_ids"]))  # type: ignore
-    print("|".join([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]]))  # type: ignore
+    print(repr("|".join([tokenizer.decode([token_id]) for token_id in encode_input["input_ids"]])))  # type: ignore

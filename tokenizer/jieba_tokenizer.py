@@ -1,5 +1,8 @@
+import re
+
 import jieba
 
+jieba.re_han_default = re.compile(r"([\u4E00-\u9FD5a-zA-Z0-9+#&\._%\-\*\>\~\`]+)", re.U)
 sengoku_suffixes = ["军", "家", "氏", "势", "党", "众", "城", "国", "守", "殿"]
 danger_particles = [
     # 方位
@@ -54,5 +57,5 @@ def get_jieba_pre_tokenizer():
     return common_pre_tokenizer, knowledge_pre_tokenizer
 
 
-_, tokenizer = get_jieba_pre_tokenizer()
-print(tokenizer.lcut("在各个令制国之间展开"))
+# _, t = get_jieba_pre_tokenizer()
+# print(t.lcut("山城"))
