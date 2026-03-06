@@ -76,7 +76,7 @@ def ocr(name):
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
-        if int(file.stem.split("_")[-1]) != 667:
+        if int(file.stem.split("_")[-1]) < 389:
             continue
         print(name, file.stem)
         with open(str(file.absolute()), "rb") as f:
@@ -222,8 +222,8 @@ def a():
 
 
 for name in [
-    "上杉谦信传",
+    "日本史",
 ]:
     print(name)
-    merge(name=name)
-    # ocr(name=name)
+    # merge(name=name)
+    ocr(name=name)

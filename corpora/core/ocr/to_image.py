@@ -53,11 +53,6 @@ def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2):
 if __name__ == "__main__":
     # 在这里输入你的 PDF 文件名
     for name in [
-        "最好看的日本战国史1：英雄黎明",
-        "最好看的日本战国史2：将星纵横",
-        "最好看的日本战国史3：天下棋峙",
-        "最好看的日本战国史4：第六天魔王",
-        "最好看的日本战国史5：太阁青云",
-        "最好看的日本战国史6：八屿混一",
+        "宛如梦幻",
     ]:
         convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3)
