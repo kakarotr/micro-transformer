@@ -8,7 +8,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from corpora.core.wiki.entities import SectionBlock, WikiPage, WikiSection
-from corpora.utils.client import get_kimi_client, get_openrouter_client, get_qwen_client
+from corpora.utils.client import (
+    get_bytedance_client,
+    get_kimi_client,
+    get_openrouter_client,
+    get_qwen_client,
+)
 from corpora.utils.db import get_cursor
 
 
@@ -68,6 +73,29 @@ prompt = f"""
 load_dotenv()
 
 
+def test_byte():
+    model_name, client = get_bytedance_client()
+    image = Path("preview/pdf_images/室町幕府/page_55.png")
+    with open(image, mode="rb") as f:
+        base64_bytes = base64.b64encode(f.read())
+        base64_str = base64_bytes.decode("utf-8")
+    response = client.beta.chat.completions.parse(
+        model="doubao-seed-1-8-251228",
+        messages=[
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
+            },
+        ],
+        response_format=Result,
+        temperature=1,
+    )
+    result = response.choices[0].message.parsed
+    assert result is not None
+    print(result.model_dump_json(indent=2))
+
+
 def ocr(name):
     images_path = Path(f"preview/pdf_images/{name}")
     output_path = Path(f"preview/jsons/{name}")
@@ -76,7 +104,7 @@ def ocr(name):
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
-        if int(file.stem.split("_")[-1]) < 389:
+        if int(file.stem.split("_")[-1]) < 446:
             continue
         print(name, file.stem)
         with open(str(file.absolute()), "rb") as f:
@@ -221,9 +249,11 @@ def a():
                     f.write(result)
 
 
-for name in [
-    "日本史",
-]:
-    print(name)
-    # merge(name=name)
-    ocr(name=name)
+# for name in [
+#     "日本史",
+# ]:
+#     print(name)
+#     # merge(name=name)
+#     ocr(name=name)
+
+test_byte()

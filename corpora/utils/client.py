@@ -43,3 +43,10 @@ def get_openrouter_client():
     key = os.environ["OPENROUTER_KEY"]
 
     return "google/gemini-3-flash-preview", OpenAI(base_url=url, api_key=key)
+
+
+def get_bytedance_client():
+    url = os.environ["BYTE_URL"]
+    key = os.environ["BYTE_KEY"]
+
+    return "doubao-seed-2-0-pro-260215", OpenAI(base_url=url, api_key=key)
