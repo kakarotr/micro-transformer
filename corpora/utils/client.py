@@ -49,4 +49,4 @@ def get_bytedance_client():
     url = os.environ["BYTE_URL"]
     key = os.environ["BYTE_KEY"]
 
-    return "doubao-seed-2-0-pro-260215", OpenAI(base_url=url, api_key=key)
+    return "doubao-seed-1-8-251228", OpenAI(base_url=url, api_key=key)

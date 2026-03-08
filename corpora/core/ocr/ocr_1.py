@@ -80,7 +80,7 @@ def test_byte():
         base64_bytes = base64.b64encode(f.read())
         base64_str = base64_bytes.decode("utf-8")
     response = client.beta.chat.completions.parse(
-        model="doubao-seed-1-8-251228",
+        model=model_name,
         messages=[
             {"role": "system", "content": prompt},
             {
@@ -104,7 +104,7 @@ def ocr(name):
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
-        if int(file.stem.split("_")[-1]) < 446:
+        if int(file.stem.split("_")[-1]) < 755:
             continue
         print(name, file.stem)
         with open(str(file.absolute()), "rb") as f:
@@ -112,9 +112,9 @@ def ocr(name):
             base64_bytes = base64.b64encode(image_data)
             base64_str = base64_bytes.decode("utf-8")
 
-        model_name, client = get_openrouter_client()
-        response = client.chat.completions.create(
-            model=model_name,
+        model_name, client = get_bytedance_client()
+        response = client.beta.chat.completions.parse(
+            model="doubao-seed-1-6-251015",
             messages=[
                 {"role": "system", "content": prompt},
                 {
@@ -122,13 +122,13 @@ def ocr(name):
                     "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
                 },
             ],
-            response_format={"type": "json_object"},
+            response_format=Result,
             temperature=1,
         )
-        result = response.choices[0].message.content
+        result = response.choices[0].message.parsed
         if result:
             with open(f"preview/jsons/{name}/{file.stem}.json", mode="w", encoding="utf-8") as f:
-                f.write(result)
+                f.write(result.model_dump_json(indent=2))
 
 
 def parse_header(text):
@@ -249,11 +249,9 @@ def a():
                     f.write(result)
 
 
-# for name in [
-#     "日本史",
-# ]:
-#     print(name)
-#     # merge(name=name)
-#     ocr(name=name)
-
-test_byte()
+for name in [
+    "日本通史",
+]:
+    print(name)
+    # merge(name=name)
+    ocr(name=name)
