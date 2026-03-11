@@ -3,7 +3,7 @@ import os
 import fitz  # PyMuPDF
 
 
-def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2):
+def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2, top_crop=50):
     """
     将 PDF 的每一页转换为图片
     :param pdf_path: PDF 文件路径
@@ -32,6 +32,10 @@ def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2):
     for page_number in range(len(pdf_document)):
         page = pdf_document.load_page(page_number)
 
+        rect = page.rect
+        new_rect = fitz.Rect(rect.x0, rect.y0 + top_crop, rect.x1, rect.y1)
+        page.set_cropbox(new_rect)
+
         # 将页面渲染为像素图 (Pixmap)
         # alpha=False 表示不使用透明通道（即白色背景）
         pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -53,6 +57,6 @@ def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2):
 if __name__ == "__main__":
     # 在这里输入你的 PDF 文件名
     for name in [
-        "宛如梦幻",
+        "应仁之乱",
     ]:
-        convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3)
+        convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3, top_crop=180)

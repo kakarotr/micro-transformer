@@ -104,7 +104,7 @@ def ocr(name):
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
-        if int(file.stem.split("_")[-1]) < 755:
+        if int(file.stem.split("_")[-1]) < 185:
             continue
         print(name, file.stem)
         with open(str(file.absolute()), "rb") as f:
@@ -151,6 +151,7 @@ def parse_header(text):
         # 模式 2: 第一节\nXXXX -> Level 3
         # 匹配以 "第" 开头，中间是中文数字，以 "节" 结尾
         (r"^第[零一二三四五六七八九十百千\d]+节\s*(.*)", 3),
+        (r"^\d+[ \t·\s]+(.+)$", 3),
         # 模式 3: 一、XXXX -> Level 4
         # 匹配以中文数字开头，紧跟着顿号 "、"
         (r"^[零一二三四五六七八九十百千\d]+、\s*(.*)", 4),
@@ -177,12 +178,13 @@ def merge(name):
         print(file.stem)
         with open(file, mode="r", encoding="utf-8") as f:
             result = Result.model_validate_json(f.read())
-            for block in result.blocks:
+            for idx, block in enumerate(result.blocks):
                 if block.type == "title":
                     if " | " in block.content:
                         continue
                     # pages[-1].sections.append(WikiSection(title=block.content, level=2, blocks=[]))
                     level, title = parse_header(text=block.content)
+                    print(level, title)
                     if level == 2:
                         pages.append(
                             WikiPage(
@@ -193,13 +195,13 @@ def merge(name):
                             )
                         )
                     else:
-                        pages[-1].sections.append(WikiSection(title=title, level=3, blocks=[]))
+                        pages[-1].sections.append(WikiSection(title=title, level=level, blocks=[]))
                 elif block.type == "paragraph":
-                    content = block.content
-                    if block.start_with_indent:
+                    content = re.sub(r"\[\d+\]", "", block.content)
+                    if idx > 0 or block.start_with_indent:
                         pages[-1].sections[-1].blocks.append(SectionBlock(type="text", content=content))
                     else:
-                        pages[-1].sections[-1].blocks[-1].content += block.content
+                        pages[-1].sections[-1].blocks[-1].content += content
 
     with get_cursor() as cursor:
         for idx, page in enumerate(pages, start=1):
@@ -249,9 +251,7 @@ def a():
                     f.write(result)
 
 
-for name in [
-    "日本通史",
-]:
+for name in ["室町幕府", "镰仓幕府", "日本史", "应仁之乱"]:
     print(name)
-    # merge(name=name)
-    ocr(name=name)
+    merge(name=name)
+    # ocr(name=name)
