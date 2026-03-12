@@ -68,6 +68,12 @@ prompt = f"""
      - **居中并非缩进**：如果一行文字处于页面正中间，左右两侧都有大量留白，说明它是居中对齐，应判定为 False（并请复核规则2，这极有可能是应丢弃的图片注释或副标题）。
      - **忽略标点符号偏移**：如果段首是前引号（如 `“` 或 `「`），请忽略引号本身由于字体排版造成的微小留白，主要观察**第一个实际汉字**的位置是否缩进了常规宽度。
 
+5.**列表合并与强制格式化 (List Merging & Forced Markdown)**: 
+  - 如果在正文中遇到连续多行的列表结构，**绝不能**单独拆分 block，必须将整个列表合并提取为一个完整的 `type: "paragraph"`。
+  - **强制 Markdown 转换 (极其重要)**：你必须将原文的列表序号强制转换为标准的 Markdown 格式（有序使用 `1. `, `2. `，无序使用 `- `）。
+  - **中文序号替换规则**：如果原文使用的是中文序号（例如图中的“第一，”、“第二，”，或者“一、”、“（一）”等），你必须**删除这些原文字符**，并严格替换为对应的阿拉伯数字 Markdown 序号（如 `1. `、`2. `）。绝对不要在最终的字符串中保留原文的中文序号字眼。
+  - **单字符串输出**：列表的所有项必须包含在同一个字符串内，各项之间使用换行符（在 JSON 中转义为 `\n`）进行分隔。
+
 # Output Format
 严格遵守 JSON Schema，返回一个包含 `blocks` 的 JSON 对象。
 {json.dumps(Result.model_json_schema(), ensure_ascii=False)}
@@ -78,22 +84,10 @@ load_dotenv()
 
 def test():
     model_name, client = get_qwen_client()
-    image = Path("preview/pdf_images/早稻田大学日本史（安土桃山时代）/page_21.png")
+    image = Path("preview/pdf_images/早稻田大学日本史（安土桃山时代）/page_1.png")
     with open(image, mode="rb") as f:
         base64_bytes = base64.b64encode(f.read())
         base64_str = base64_bytes.decode("utf-8")
-    # response = client.beta.chat.completions.parse(
-    #     model="openai/gpt-5-nano",
-    #     messages=[
-    #         {"role": "system", "content": prompt},
-    #         {
-    #             "role": "user",
-    #             "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
-    #         },
-    #     ],
-    #     response_format=Result,
-    #     temperature=0.2,
-    # )
     response = client.chat.completions.create(
         model="qwen3.5-flash",
         messages=[
@@ -230,4 +224,5 @@ def merge(name):
 
 
 if __name__ == "__main__":
-    merge(name="早稻田大学日本史（安土桃山时代）")
+    # ocr()
+    test()
