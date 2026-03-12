@@ -30,3 +30,22 @@ class TransformerConfig(BaseModel):
                 "num_key_value_heads ({self.num_key_value_heads}) to support GQA/MQA."
             )
         return self
+
+    def compute_model_size(self):
+        attention_size = (
+            self.hidden_size * self.hidden_size
+            + self.hidden_size * (self.hidden_size // self.num_attention_heads) * self.num_attention_heads * 2
+            + self.hidden_size * self.hidden_size
+        )
+        mlp_size = self.hidden_size * self.intermediate_size * 3
+        norm_size = self.hidden_size
+        one_layer_size = attention_size + mlp_size + norm_size * 2
+
+        embedding_size = self.hidden_size * self.vocab_size
+        lm_head_size = self.hidden_size * self.vocab_size
+
+        total = one_layer_size * self.num_layers + embedding_size + norm_size + lm_head_size
+        return {
+            "total": one_layer_size * self.num_layers + embedding_size + norm_size + lm_head_size,
+            "compture_size": total - embedding_size - lm_head_size,
+        }

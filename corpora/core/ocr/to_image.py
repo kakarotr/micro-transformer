@@ -57,6 +57,6 @@ def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2, top_crop
 if __name__ == "__main__":
     # 在这里输入你的 PDF 文件名
     for name in [
-        "应仁之乱",
+        "早稻田大学日本史（安土桃山时代）",
     ]:
-        convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3, top_crop=180)
+        convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3, top_crop=0)

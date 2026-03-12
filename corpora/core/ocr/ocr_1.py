@@ -4,16 +4,12 @@ import re
 from pathlib import Path
 from typing import Annotated, Literal
 
+import click
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from corpora.core.wiki.entities import SectionBlock, WikiPage, WikiSection
-from corpora.utils.client import (
-    get_bytedance_client,
-    get_kimi_client,
-    get_openrouter_client,
-    get_qwen_client,
-)
+from corpora.utils.client import get_qwen_client
 from corpora.utils.db import get_cursor
 
 
@@ -50,6 +46,9 @@ prompt = f"""
    - **忽略图片注释 (Skip Captions)**: 
      - 凡是出现在插图正下方、字体明显小于正文、或者采用居中对齐的说明性文字，请**直接丢弃**，不要将其作为 block 输出。
    - **忽略页眉页脚**: 页面最顶端或最底端的页码、书名标记也请忽略。
+   - **剔除行内注释序号 (Clean Inline Citations)**: 
+     - 在提取 `paragraph` 或 `title` 的具体文字时，如果遇到穿插在正文句子中的上标数字、带有圆圈的脚注/尾注序号（如 ①、②、③ 等），请**直接过滤掉**。
+     - 绝对不要将这些符号输出到最终提取的文本中，**更不要**因为这些符号的存在而将一个完整连贯的自然段强行拆分成多个不同的 block。确保提取出的文本是纯净且语义连续的。
 
 3. **类型判断 (`type`)**:
    - **标题 (`title`)**: 
@@ -59,11 +58,15 @@ prompt = f"""
      - 仅包含标准的**正文文本**。
      - 必须是页面主体内容的一部分。
 
-4. **缩进检测 (`start_with_indent`)**:
-   - 仅对 `paragraph` 有效。
-   - 仔细观察文本块的第一行：
-     - **True**: 第一行左侧有明显的空白（通常是两个汉字宽的缩进）。这是判断自然段开始的重要标志。
-     - **False**: 第一行与左侧边界对齐（顶格）。(注：如果这行字是居中的小字，请检查规则2，它很可能是应当被忽略的图片注释)。
+4. **严格缩进检测 (`start_with_indent` - Critical)**:
+   - 仅对 `paragraph` 类型的 block 有效。
+   - **核心判断标准（相对位置对比）**：请不要依赖视觉上的绝对距离，而是严格对比当前段落**第一行的首字符**与**第二行的首字符**的垂直对齐关系：
+     - **True (有缩进)**：第一行的起始位置明显位于第二行起始位置的**右侧**。
+     - **False (无缩进/顶格)**：第一行的起始位置与第二行左侧**严格平齐**。
+   - **单行段落的判断（全局基准线）**：如果该段落只有一行，请寻找页面的**左侧正文边界基准线**（其他顶格段落或正文的最左侧边缘）。如果该行向右偏离基准线，则为 True；如果紧贴基准线，则为 False。
+   - **特殊情况与抗干扰（Edge Cases）**：
+     - **居中并非缩进**：如果一行文字处于页面正中间，左右两侧都有大量留白，说明它是居中对齐，应判定为 False（并请复核规则2，这极有可能是应丢弃的图片注释或副标题）。
+     - **忽略标点符号偏移**：如果段首是前引号（如 `“` 或 `「`），请忽略引号本身由于字体排版造成的微小留白，主要观察**第一个实际汉字**的位置是否缩进了常规宽度。
 
 # Output Format
 严格遵守 JSON Schema，返回一个包含 `blocks` 的 JSON 对象。
@@ -73,14 +76,26 @@ prompt = f"""
 load_dotenv()
 
 
-def test_byte():
-    model_name, client = get_bytedance_client()
-    image = Path("preview/pdf_images/室町幕府/page_55.png")
+def test():
+    model_name, client = get_qwen_client()
+    image = Path("preview/pdf_images/早稻田大学日本史（安土桃山时代）/page_21.png")
     with open(image, mode="rb") as f:
         base64_bytes = base64.b64encode(f.read())
         base64_str = base64_bytes.decode("utf-8")
-    response = client.beta.chat.completions.parse(
-        model=model_name,
+    # response = client.beta.chat.completions.parse(
+    #     model="openai/gpt-5-nano",
+    #     messages=[
+    #         {"role": "system", "content": prompt},
+    #         {
+    #             "role": "user",
+    #             "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
+    #         },
+    #     ],
+    #     response_format=Result,
+    #     temperature=0.2,
+    # )
+    response = client.chat.completions.create(
+        model="qwen3.5-flash",
         messages=[
             {"role": "system", "content": prompt},
             {
@@ -88,15 +103,18 @@ def test_byte():
                 "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
             },
         ],
-        response_format=Result,
-        temperature=1,
+        response_format={"type": "json_object"},
+        temperature=0.1,
     )
-    result = response.choices[0].message.parsed
+    result = response.choices[0].message.content
     assert result is not None
-    print(result.model_dump_json(indent=2))
+    print(result)
 
 
-def ocr(name):
+@click.command()
+@click.argument("name")
+@click.option("--start", help="开始的页数")
+def ocr(name, start):
     images_path = Path(f"preview/pdf_images/{name}")
     output_path = Path(f"preview/jsons/{name}")
     if not output_path.exists():
@@ -104,7 +122,7 @@ def ocr(name):
     files = [file for file in images_path.iterdir() if file.is_file() and file.name != ".DS_Store"]
     files.sort(key=lambda p: int(p.stem.split("_")[-1]))
     for file in files:
-        if int(file.stem.split("_")[-1]) < 185:
+        if start and int(file.stem.split("_")[-1]) < int(start):
             continue
         print(name, file.stem)
         with open(str(file.absolute()), "rb") as f:
@@ -112,9 +130,9 @@ def ocr(name):
             base64_bytes = base64.b64encode(image_data)
             base64_str = base64_bytes.decode("utf-8")
 
-        model_name, client = get_bytedance_client()
-        response = client.beta.chat.completions.parse(
-            model="doubao-seed-1-6-251015",
+        model_name, client = get_qwen_client()
+        response = client.chat.completions.create(
+            model="qwen3.5-flash",
             messages=[
                 {"role": "system", "content": prompt},
                 {
@@ -122,13 +140,16 @@ def ocr(name):
                     "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
                 },
             ],
-            response_format=Result,
-            temperature=1,
+            response_format={"type": "json_object"},
+            temperature=0.1,
         )
-        result = response.choices[0].message.parsed
-        if result:
-            with open(f"preview/jsons/{name}/{file.stem}.json", mode="w", encoding="utf-8") as f:
-                f.write(result.model_dump_json(indent=2))
+        result = response.choices[0].message.content
+        print(result)
+        # assert result is not None
+        # result = Result.model_validate_json(result)
+        # if result:
+        #     with open(f"preview/jsons/{name}/{file.stem}.json", mode="w", encoding="utf-8") as f:
+        #         f.write(result.model_dump_json(indent=2))
 
 
 def parse_header(text):
@@ -136,36 +157,26 @@ def parse_header(text):
     解析标题，返回 (level, title_content)。
     如果没有匹配任何模式，返回 (None, text) 或者根据需求自定义。
     """
-    # 预处理：去除首尾可能存在的空白字符，但在正则匹配时保留中间的换行
-    text = text.strip()
-
-    # 定义正则逻辑
-    # re.DOTALL (re.S) 让 '.' 也可以匹配换行符，防止标题内容本身包含换行
-    # [零一二三四五六七八九十百千]+ 用于匹配中文数字
-    # \s* 用于吃掉前缀后的空格、换行符等
+    # patterns = [
+    #     (r"^[零一二三四五六七八九十百千\d]+章\s*(.*)", 2),
+    #     (r"^第[零一二三四五六七八九十百千\d]+节\s*(.*)", 3),
+    #     (r"^\d+[ \t·\s]+(.+)$", 3),
+    #     (r"^[零一二三四五六七八九十百千\d]+、\s*(.*)", 4),
+    # ]
+    if text == "序言":
+        return 2, text
 
     patterns = [
-        # 模式 1: 第一章 XXX -> Level 2
-        # 匹配以 "第" 开头，中间是中文数字，以 "章" 结尾
         (r"^第[零一二三四五六七八九十百千\d]+章\s*(.*)", 2),
-        # 模式 2: 第一节\nXXXX -> Level 3
-        # 匹配以 "第" 开头，中间是中文数字，以 "节" 结尾
-        (r"^第[零一二三四五六七八九十百千\d]+节\s*(.*)", 3),
-        (r"^\d+[ \t·\s]+(.+)$", 3),
-        # 模式 3: 一、XXXX -> Level 4
-        # 匹配以中文数字开头，紧跟着顿号 "、"
-        (r"^[零一二三四五六七八九十百千\d]+、\s*(.*)", 4),
+        (r"^[零一二三四五六七八九十百千\d]+、\s*(.*)", 3),
+        (r"^（[零一二三四五六七八九十百千\d]+）\s*(.*)", 4),
     ]
 
     for pattern, level in patterns:
-        # 使用 re.DOTALL 模式以支持跨行匹配
         match = re.match(pattern, text, re.DOTALL)
         if match:
-            # group(1) 是去掉前缀后的实际标题内容
             title_content = match.group(1).strip()
             return level, title_content
-
-    # 如果都不匹配，默认处理（例如返回 level 0 或者 None）
     return 0, text
 
 
@@ -184,7 +195,8 @@ def merge(name):
                         continue
                     # pages[-1].sections.append(WikiSection(title=block.content, level=2, blocks=[]))
                     level, title = parse_header(text=block.content)
-                    print(level, title)
+                    if title.startswith("·"):
+                        title = title[1:]
                     if level == 2:
                         pages.append(
                             WikiPage(
@@ -204,54 +216,18 @@ def merge(name):
                         pages[-1].sections[-1].blocks[-1].content += content
 
     with get_cursor() as cursor:
+        p = Path(f"preview/markdown/{name}")
+        if not p.exists():
+            p.mkdir()
+
         for idx, page in enumerate(pages, start=1):
-            with open(f"preview/markdown/{name}_{idx}.md", mode="w", encoding="utf-8") as f:
+            with open(f"preview/markdown/{name}/{name}_{idx}.md", mode="w", encoding="utf-8") as f:
                 f.write(page.merge_sections())
-            cursor.execute(
-                "insert into book_core_corpus (title, raw_content, content) values (%s, %s, %s)",
-                (name, page.model_dump_json(), page.model_dump_json()),
-            )
+            # cursor.execute(
+            #     "insert into book_core_corpus (title, raw_content, content) values (%s, %s, %s)",
+            #     (name, page.model_dump_json(), page.model_dump_json()),
+            # )
 
 
-def a():
-    prefix = "preview/pdf_images/日本战国风云录（上）/page_"
-    test_images = [
-        f"{prefix}28.png",
-    ]
-
-    for idx, item in enumerate(test_images, start=1):
-        with open(item, "rb") as f:
-            print(item)
-            image_data = f.read()
-            base64_bytes = base64.b64encode(image_data)
-            base64_str = base64_bytes.decode("utf-8")
-
-            model_name, client = get_openrouter_client()
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {
-                        "role": "user",
-                        "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_str}"}}],
-                    },
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-                extra_body={
-                    "provider": {
-                        "order": ["deepinfra", "together"],
-                        "allow_fallbacks": True,
-                    }
-                },
-            )
-            result = response.choices[0].message.content
-            if result:
-                with open(f"preview/jsons/{idx}.json", mode="w", encoding="utf-8") as f:
-                    f.write(result)
-
-
-for name in ["室町幕府", "镰仓幕府", "日本史", "应仁之乱"]:
-    print(name)
-    merge(name=name)
-    # ocr(name=name)
+if __name__ == "__main__":
+    merge(name="早稻田大学日本史（安土桃山时代）")

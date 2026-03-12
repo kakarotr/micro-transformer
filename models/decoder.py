@@ -135,20 +135,20 @@ class CausalLanguageModel(nn.Module):
             shift_logits = logits[:, :-1, :].contiguous().view(-1, self.vocab_size)
             shift_labels = labels[:, 1:].contiguous().view(-1)
             loss = F.cross_entropy(shift_logits, shift_labels)
-        return logits, loss
+        return loss, logits
 
 
-CausalLanguageModel(
-    config=TransformerConfig(
-        vocab_size=32768,
-        max_position_embeddings=4096,
-        hidden_size=768,
-        num_layers=1,
-        num_attention_heads=8,
-        num_key_value_heads=8,
-        dropout_prob=0.0,
-        intermediate_size=2050,
-        rms_eps=1e-6,
-        rope_base=10000,
-    )
+# 0.68B
+config = TransformerConfig(
+    vocab_size=32768,
+    max_position_embeddings=4096,
+    hidden_size=1024,
+    num_layers=48,
+    num_attention_heads=16,
+    num_key_value_heads=16,
+    dropout_prob=0.0,
+    intermediate_size=2816,
+    rms_eps=1e-6,
+    rope_base=10000,
 )
+print(config.compute_model_size())
