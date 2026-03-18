@@ -1,10 +1,5 @@
-import json
-
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-from tokenizer.jieba_tokenizer import get_jieba_pre_tokenizer
-
-_, pre_tokenizer = get_jieba_pre_tokenizer()
 tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("weight")
 
 common_test_texts = [

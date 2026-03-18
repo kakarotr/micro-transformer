@@ -31,25 +31,31 @@ class DecoderLayer(nn.Module):
             num_key_value_heads=num_key_value_heads,
             dropout_prob=dropout_prob,
         )
-        self.mlp = SwiGLUMLP(hidden_size=hidden_size, intermediate_size=intermediate_size, dropout_prob=dropout_prob)
-        self.atten_norm = RMSNorm(hidden_size=hidden_size, eps=rms_eps)
+        self.mlp = SwiGLUMLP(hidden_size=hidden_size, intermediate_size=intermediate_size)
+        self.attn_norm = RMSNorm(hidden_size=hidden_size, eps=rms_eps)
         self.mlp_norm = RMSNorm(hidden_size=hidden_size, eps=rms_eps)
+        self.attn_dropout = nn.Dropout(dropout_prob)
+        self.mlp_dropout = nn.Dropout(dropout_prob)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         position_ids: torch.Tensor,
         attn_mask: torch.Tensor,
-    ) -> torch.Tensor:
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+        use_cache: bool = False,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
+        if use_cache or past_key_value is not None:
+            raise NotImplementedError("KV cache path is reserved but not implemented yet.")
         residual = hidden_states
-        output = self.attention(self.atten_norm(hidden_states), position_ids, attn_mask)
-        hidden_states = residual + output
+        hidden_states = self.attention(self.attn_norm(hidden_states), position_ids, attn_mask)
+        hidden_states = residual + self.attn_dropout(hidden_states)
 
         residual = hidden_states
-        output = self.mlp(self.mlp_norm(hidden_states))
-        hidden_states = residual + output
+        hidden_states = self.mlp(self.mlp_norm(hidden_states))
+        hidden_states = residual + self.mlp_dropout(hidden_states)
 
-        return hidden_states
+        return hidden_states, None
 
 
 class Decoder(nn.Module):
@@ -68,7 +74,7 @@ class Decoder(nn.Module):
         pad_token_id: int,
     ):
         super().__init__()
-        self.embeddings = nn.Embedding(vocab_size, hidden_size)
+        self.embeddings = nn.Embedding(vocab_size, hidden_size, padding_idx=pad_token_id)
         self.rope = DefaultRope(
             base=rope_base, max_position_embeddings=max_position_embeddings, head_dim=hidden_size // num_attention_heads
         )
@@ -90,8 +96,21 @@ class Decoder(nn.Module):
         self.norm = RMSNorm(hidden_size=hidden_size, eps=rms_eps)
         self.pad_token_id = pad_token_id
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        past_key_values: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor:
+        if use_cache or past_key_values is not None:
+            raise NotImplementedError("Decoder KV cache path is not implemented yet.")
+
         _, seq_len = input_ids.size()
+        if seq_len > self.rope.max_position_embeddings:
+            raise ValueError(
+                f"seq_len ({seq_len}) exceeds max_position_embeddings ({self.rope.max_position_embeddings})"
+            )
+
         device = input_ids.device
 
         hidden_states = self.embedd_dropout(self.embeddings(input_ids))
@@ -101,7 +120,7 @@ class Decoder(nn.Module):
         attn_mask = causal_mask + padding_mask
 
         for layer in self.layers:
-            hidden_states = layer(hidden_states, positions_ids, attn_mask)
+            hidden_states, _ = layer(hidden_states, positions_ids, attn_mask)
 
         return self.norm(hidden_states)
 
