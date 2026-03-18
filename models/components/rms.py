@@ -8,8 +8,12 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(hidden_size))
 
-    def forward(self, hidden_states: torch.Tensor):
-        input_type = hidden_states.dtype
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         rms = (hidden_states.pow(2).mean(dim=-1, keepdim=True) + self.eps).rsqrt()
-        return (hidden_states * rms).to(input_type) * self.weight
+        hidden_states = hidden_states * rms
+        if hidden_states.dtype != self.weight.dtype:
+            hidden_states = hidden_states.to(self.weight.dtype)
+        hidden_states = hidden_states * self.weight
+        return hidden_states.to(input_dtype)

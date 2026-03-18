@@ -1,9 +1,24 @@
 import os
 
 import fitz  # PyMuPDF
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 
-def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2, top_crop=50):
+def convert_pdf_to_images(
+    pdf_path,
+    output_dir="output_images",
+    zoom=2,
+    top_crop=0,
+    bottom_crop=0,
+    left_crop=0,
+    right_crop=0,
+):
     """
     将 PDF 的每一页转换为图片
     :param pdf_path: PDF 文件路径
@@ -26,37 +41,46 @@ def convert_pdf_to_images(pdf_path, output_dir="output_images", zoom=2, top_crop
     # Matrix(x, y) 代表水平和垂直方向的缩放
     mat = fitz.Matrix(zoom, zoom)
 
-    print(f"开始转换: {pdf_path}，总计 {len(pdf_document)} 页")
+    with Progress(
+        SpinnerColumn(), TextColumn("[bold blue]{task.description}"), BarColumn(), MofNCompleteColumn()
+    ) as progress:
+        task_id = progress.add_task(name, total=len(pdf_document))
 
-    # 5. 逐页处理
-    for page_number in range(len(pdf_document)):
-        page = pdf_document.load_page(page_number)
+        for page_number in range(len(pdf_document)):
+            page = pdf_document.load_page(page_number)
 
-        rect = page.rect
-        new_rect = fitz.Rect(rect.x0, rect.y0 + top_crop, rect.x1, rect.y1)
-        page.set_cropbox(new_rect)
+            rect = page.rect
+            new_x0 = rect.x0 + left_crop
+            new_y0 = rect.y0 + top_crop
+            new_x1 = rect.x1 - right_crop
+            new_y1 = rect.y1 - bottom_crop
 
-        # 将页面渲染为像素图 (Pixmap)
-        # alpha=False 表示不使用透明通道（即白色背景）
-        pix = page.get_pixmap(matrix=mat, alpha=False)
+            new_x0 = min(new_x0, new_x1)
+            new_y0 = min(new_y0, new_y1)
 
-        # 拼接输出文件名
-        image_filename = f"page_{page_number + 1}.png"
-        image_path = os.path.join(output_dir, image_filename)
+            new_rect = fitz.Rect(new_x0, new_y0, new_x1, new_y1)
+            page.set_cropbox(new_rect)
 
-        # 保存图片
-        pix.save(image_path)
-        print(f"进度: [{page_number + 1}/{len(pdf_document)}] 已保存 {image_filename}")
+            # 将页面渲染为像素图 (Pixmap)
+            # alpha=False 表示不使用透明通道（即白色背景）
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+
+            # 拼接输出文件名
+            image_filename = f"page_{page_number + 1}.png"
+            image_path = os.path.join(output_dir, image_filename)
+
+            # 保存图片
+            pix.save(image_path)
+            progress.update(task_id, advance=1)
 
     # 6. 关闭文档
     pdf_document.close()
-    print("转换完成！")
 
 
 # --- 使用示例 ---
 if __name__ == "__main__":
     # 在这里输入你的 PDF 文件名
     for name in [
-        "早稻田大学日本史（安土桃山时代）",
+        "岩波日本史",
     ]:
-        convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3, top_crop=0)
+        convert_pdf_to_images(f"preview/pdfs/{name}.pdf", output_dir=f"preview/pdf_images/{name}", zoom=3)
