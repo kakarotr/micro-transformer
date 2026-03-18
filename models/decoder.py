@@ -120,7 +120,7 @@ class Decoder(nn.Module):
         attn_mask = causal_mask + padding_mask
 
         for layer in self.layers:
-            hidden_states, _ = layer(hidden_states, positions_ids, attn_mask)
+            hidden_states, _ = layer(hidden_states, positions_ids, attn_mask, past_key_values, use_cache)
 
         return self.norm(hidden_states)
 
