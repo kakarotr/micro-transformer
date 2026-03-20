@@ -6,12 +6,10 @@ import torch
 def create_causal_mask(
     seq_len: int,
     *,
-    dtype: torch.dtype = torch.float32,
     device: torch.device | None = None,
 ):
-    mask = torch.zeros((seq_len, seq_len), dtype=dtype, device=device)
-    future = torch.triu(torch.ones((seq_len, seq_len), dtype=dtype, device=device), diagonal=1)
-    mask = mask.masked_fill(future, float("-inf"))
+    mask = torch.ones((seq_len, seq_len), dtype=torch.bool, device=device)
+    mask = mask.tril()
     return mask.unsqueeze(0).unsqueeze(0)
 
 
@@ -20,7 +18,6 @@ def create_padding_mask(
     *,
     input_ids: torch.Tensor,
     pad_token_id: int,
-    dtype: torch.dtype = torch.float32,
     device: torch.device | None = None,
 ) -> torch.Tensor: ...
 
@@ -29,7 +26,6 @@ def create_padding_mask(
 def create_padding_mask(
     *,
     attention_mask: torch.Tensor,
-    dtype: torch.dtype = torch.float32,
     device: torch.device | None = None,
 ) -> torch.Tensor: ...
 
@@ -39,7 +35,6 @@ def create_padding_mask(
     input_ids: torch.Tensor | None = None,
     attention_mask: torch.Tensor | None = None,
     pad_token_id: int | None = None,
-    dtype: torch.dtype = torch.float32,
     device: torch.device | None = None,
 ):
     use_input_ids = input_ids is not None
@@ -53,14 +48,13 @@ def create_padding_mask(
         if input_ids.ndim != 2:
             raise ValueError(f"input_ids must be 2D [batch_size, seq_len], got {tuple(input_ids.shape)}")
 
-        mask = torch.zeros_like(input_ids, dtype=dtype)
-        mask = mask.masked_fill(input_ids == pad_token_id, float("-inf"))
+        mask = input_ids != pad_token_id
         return mask.unsqueeze(1).unsqueeze(1)
 
     assert attention_mask is not None
     if attention_mask.ndim != 2:
         raise ValueError(f"attention_mask must be 2D [batch_size, seq_len], got {tuple(attention_mask.shape)}")
 
-    mask = torch.zeros_like(attention_mask, dtype=dtype, device=device)
-    mask = mask.masked_fill(attention_mask.to(device) == 0, float("-inf"))
+    mask = attention_mask != 0
+    mask = mask.to(device)
     return mask.unsqueeze(1).unsqueeze(1)

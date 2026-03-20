@@ -1,14 +1,10 @@
-import math
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from models.components.attention import MultiHeadAttention
 from models.components.mlp import SwiGLUMLP
-from models.components.rms import RMSNorm
+from models.components.rms_norm import RMSNorm
 from models.components.rope import DefaultRope, Rope
-from models.config import TransformerConfig
 from models.utilities.mask import create_causal_mask, create_padding_mask
 
 
@@ -42,10 +38,10 @@ class DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         position_ids: torch.Tensor,
         attn_mask: torch.Tensor,
-        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+        past_key_values: tuple[torch.Tensor, torch.Tensor] | None = None,
         use_cache: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
-        if use_cache or past_key_value is not None:
+        if use_cache or past_key_values is not None:
             raise NotImplementedError("KV cache path is reserved but not implemented yet.")
         residual = hidden_states
         hidden_states = self.attention(self.attn_norm(hidden_states), position_ids, attn_mask)
@@ -99,86 +95,51 @@ class Decoder(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
         past_key_values: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         use_cache: bool = False,
     ) -> torch.Tensor:
+        _, seq_len = input_ids.size()
+
         if use_cache or past_key_values is not None:
             raise NotImplementedError("Decoder KV cache path is not implemented yet.")
 
-        _, seq_len = input_ids.size()
         if seq_len > self.rope.max_position_embeddings:
             raise ValueError(
                 f"seq_len ({seq_len}) exceeds max_position_embeddings ({self.rope.max_position_embeddings})"
             )
 
+        if attention_mask is not None:
+            if attention_mask.ndim != 2 or attention_mask.shape != input_ids.shape:
+                raise ValueError("attention_mask must have same shape as input_ids")
+
+        if position_ids is not None:
+            if position_ids.ndim not in (1, 2):
+                raise ValueError("position_ids must be 1D or 2D")
+            if position_ids.shape[-1] != seq_len:
+                raise ValueError("position_ids.shape[-1] must equal seq_len")
+            if (position_ids < 0).any() or (position_ids >= self.rope.max_position_embeddings).any():
+                raise ValueError("position_ids out of range")
+
         device = input_ids.device
 
-        hidden_states = self.embedd_dropout(self.embeddings(input_ids))
-        positions_ids = torch.arange(seq_len, device=device).unsqueeze(0)
-        causal_mask = create_causal_mask(seq_len=seq_len, device=input_ids.device)
-        padding_mask = create_padding_mask(input_ids=input_ids, pad_token_id=self.pad_token_id)
-        attn_mask = causal_mask + padding_mask
+        if position_ids is None:
+            position_ids = attention_mask.cumsum(dim=-1) - 1
+            position_ids = position_ids.clamp_min(0)
+            position_ids = position_ids.masked_fill(attention_mask == 0, 0)
 
-        for layer in self.layers:
-            hidden_states, _ = layer(hidden_states, positions_ids, attn_mask, past_key_values, use_cache)
+        hidden_states = self.embedd_dropout(self.embeddings(input_ids))
+        causal_mask = create_causal_mask(seq_len=seq_len, device=device)
+        has_padding = not attention_mask.all()
+        if has_padding:
+            padding_mask = create_padding_mask(attention_mask=attention_mask, device=device)
+            attn_mask = causal_mask & padding_mask
+        else:
+            attn_mask = causal_mask
+
+        for idx, layer in enumerate(self.layers):
+            layer_past = None if past_key_values is None else past_key_values[idx]
+            hidden_states, _ = layer(hidden_states, position_ids, attn_mask, layer_past, use_cache)
 
         return self.norm(hidden_states)
-
-
-class CausalLanguageModel(nn.Module):
-    def __init__(self, config: TransformerConfig):
-        super().__init__()
-        self.num_layers = config.num_layers
-        self.vocab_size = config.vocab_size
-        self.decoder = Decoder(
-            vocab_size=config.vocab_size,
-            max_position_embeddings=config.max_position_embeddings,
-            num_layers=config.num_layers,
-            num_attention_heads=config.num_attention_heads,
-            num_key_value_heads=config.num_key_value_heads,
-            hidden_size=config.hidden_size,
-            intermediate_size=config.intermediate_size,
-            rms_eps=config.rms_eps,
-            dropout_prob=config.dropout_prob,
-            rope_base=config.rope_base,
-            pad_token_id=config.pad_token_id,
-        )
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self._init_weights()
-
-    def _init_weights(self):
-        base_std = 0.02
-        for name, module in self.named_modules():
-            if isinstance(module, (nn.Linear, nn.Embedding)):
-                if name.endswith("o_proj") or name.endswith("down_proj"):
-                    scaled_std = base_std / math.sqrt(2 * self.num_layers)
-                    module.weight.data.normal_(mean=0.0, std=scaled_std)
-                else:
-                    module.weight.data.normal_(mean=0.0, std=base_std)
-
-    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor | None = None):
-        hidden_states = self.decoder(input_ids)
-        logits = self.lm_head(hidden_states)
-        loss = None
-        if labels is not None:
-            shift_logits = logits[:, :-1, :].contiguous().view(-1, self.vocab_size)
-            shift_labels = labels[:, 1:].contiguous().view(-1)
-            loss = F.cross_entropy(shift_logits, shift_labels)
-        return loss, logits
-
-
-# 0.68B
-config = TransformerConfig(
-    vocab_size=32768,
-    max_position_embeddings=4096,
-    hidden_size=1024,
-    num_layers=48,
-    num_attention_heads=16,
-    num_key_value_heads=16,
-    dropout_prob=0.0,
-    intermediate_size=2816,
-    rms_eps=1e-6,
-    rope_base=10000,
-    pad_token_id=0,
-)
-print(config.compute_model_size())

@@ -10,8 +10,8 @@ class Rope(nn.Module):
         self.head_dim = head_dim
         cos, sin = self._precompute_cos_sin_cache()
 
-        self.register_buffer("cos_cached", cos, persistent=False)
-        self.register_buffer("sin_cached", sin, persistent=False)
+        self.register_buffer("_cos_cached", cos, persistent=False)
+        self.register_buffer("_sin_cached", sin, persistent=False)
 
     def _precompute_cos_sin_cache(self):
         inv_freq = 1 / self.base ** (torch.arange(0, self.head_dim, 2, dtype=torch.float32) / self.head_dim)
@@ -32,8 +32,8 @@ class Rope(nn.Module):
 
         position_ids = position_ids.to(dtype=torch.long, device=device)
 
-        cos: torch.Tensor = self.cos_cached[position_ids].unsqueeze(1)
-        sin: torch.Tensor = self.sin_cached[position_ids].unsqueeze(1)
+        cos: torch.Tensor = self._cos_cached[position_ids].unsqueeze(1)
+        sin: torch.Tensor = self._sin_cached[position_ids].unsqueeze(1)
 
         return cos, sin
 

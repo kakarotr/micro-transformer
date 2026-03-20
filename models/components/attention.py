@@ -54,7 +54,9 @@ class MultiHeadAttention(nn.Module):
             k = k.repeat_interleave(self.n_rep, 1)
             v = v.repeat_interleave(self.n_rep, 1)
 
-        attn_mask = attn_mask.to(device=q.device, dtype=q.dtype)
+        if attn_mask.dtype != torch.bool:
+            raise ValueError("attn_mask must be bool tensor")
+        attn_mask = attn_mask.to(device=q.device)
 
         context_vectors = F.scaled_dot_product_attention(
             query=q,
