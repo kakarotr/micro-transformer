@@ -25,10 +25,16 @@ def count_text_rows(data_dir: str, workers: int = 8) -> int:
         return sum(ex.map(count_text, map(str, files)))
 
 
-tokenizer = AutoTokenizer.from_pretrained("weight")
+tokenizer = None
+
+
+def init_tokenizer():
+    global tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("weight")
 
 
 def count_token(fp: str) -> int:
+    global tokenizer
     try:
         pf = pq.ParquetFile(fp)
         if "text" not in pf.schema_arrow.names:
@@ -37,14 +43,13 @@ def count_token(fp: str) -> int:
         total_tokens = 0
 
         for batch in pf.iter_batches(columns=["text"], batch_size=2048):
-            arr = batch.column(0)
-
-            texts = [x.as_py() for x in arr if x is not None]
+            texts = [t for t in batch.column(0).to_pylist() if isinstance(t, str)]
             if not texts:
                 continue
 
             for i in range(0, len(texts), 1024):
                 sub_texts = texts[i : i + 1024]
+                assert tokenizer is not None
                 enc = tokenizer(
                     sub_texts,
                     add_special_tokens=False,
@@ -52,7 +57,7 @@ def count_token(fp: str) -> int:
                     return_token_type_ids=False,
                     truncation=False,
                 )
-                total_tokens += sum(len(ids) for ids in enc["input_ids"])  # type: ignore
+                total_tokens += sum(len(ids) for ids in enc["input_ids"])
 
         return total_tokens
 
@@ -61,17 +66,12 @@ def count_token(fp: str) -> int:
         return 0
 
 
-def count_pretrain_token(data_dir: str, workers: int = 8):
-    from pathlib import Path
-
-    import pyarrow.parquet as pq
-
-    files = list(Path(data_dir).rglob("*.parquet"))
-
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        return sum(ex.map(count_token, map(str, files)))
+def count_pretrain_token(data_dir: str, workers: int = 8) -> int:
+    files = [str(p) for p in Path(data_dir).rglob("*.parquet")]
+    with ProcessPoolExecutor(max_workers=workers, initializer=init_tokenizer) as ex:
+        return sum(ex.map(count_token, files))
 
 
 if __name__ == "__main__":
-    total = count_pretrain_token(data_dir="data/common", workers=16)
+    total = count_pretrain_token(data_dir="data/common", workers=8)
     print(total)
