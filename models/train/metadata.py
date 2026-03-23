@@ -62,14 +62,13 @@ def count_token(fp: str) -> int:
 
 
 def count_pretrain_token(data_dir: str, workers: int = 8):
-    from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
 
     import pyarrow.parquet as pq
 
     files = list(Path(data_dir).rglob("*.parquet"))
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         return sum(ex.map(count_token, map(str, files)))
 
 

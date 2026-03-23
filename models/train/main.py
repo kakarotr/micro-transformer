@@ -1,14 +1,12 @@
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, TrainingArguments
+from transformers import AutoTokenizer
 
 from models.causal_lm import CausalLanguageModel
 from models.config import TransformerConfig
 from models.train.collator import PretrainingCollator
 from models.train.dataset import PretrainingDataset, create_pretraining_splits
-
-TrainingArguments()
 
 
 def train(
@@ -44,44 +42,45 @@ def train(
 
 
 if __name__ == "__main__":
-    tokenizer = AutoTokenizer.from_pretrained("weight")
+    create_pretraining_splits(data_dir="data/common", split_dir="models/train/manifest")
+    # tokenizer = AutoTokenizer.from_pretrained("weight")
 
-    config = TransformerConfig(
-        vocab_size=32768,
-        max_position_embeddings=4096,
-        hidden_size=1024,
-        num_layers=48,
-        num_attention_heads=16,
-        num_key_value_heads=16,
-        dropout_prob=0.0,
-        intermediate_size=2816,
-        rms_eps=1e-6,
-        rope_base=10000,
-        pad_token_id=tokenizer.pad_token_id,
-    )
+    # config = TransformerConfig(
+    #     vocab_size=32768,
+    #     max_position_embeddings=4096,
+    #     hidden_size=1024,
+    #     num_layers=48,
+    #     num_attention_heads=16,
+    #     num_key_value_heads=16,
+    #     dropout_prob=0.0,
+    #     intermediate_size=2816,
+    #     rms_eps=1e-6,
+    #     rope_base=10000,
+    #     pad_token_id=tokenizer.pad_token_id,
+    # )
 
-    model = CausalLanguageModel(config=config)
+    # model = CausalLanguageModel(config=config)
 
-    train_files, valid_files, _ = create_pretraining_splits(
-        data_dir="data/common",
-        split_dir="models/train",
-        glob_pattern="*.parquet",
-    )
-    train_dataset = PretrainingDataset(train_files, tokenizer=tokenizer, max_seq_len=4096)
-    valid_dataset = PretrainingDataset(valid_files, tokenizer=tokenizer, max_seq_len=4096)
+    # train_files, valid_files, _ = create_pretraining_splits(
+    #     data_dir="data/common",
+    #     split_dir="models/train",
+    #     glob_pattern="*.parquet",
+    # )
+    # train_dataset = PretrainingDataset(train_files, tokenizer=tokenizer, max_seq_len=4096)
+    # valid_dataset = PretrainingDataset(valid_files, tokenizer=tokenizer, max_seq_len=4096)
 
-    collattor = PretrainingCollator(
-        pad_token_id=tokenizer.pad_token_id,
-        max_seq_len=config.max_position_embeddings,
-    )
+    # collattor = PretrainingCollator(
+    #     pad_token_id=tokenizer.pad_token_id,
+    #     max_seq_len=config.max_position_embeddings,
+    # )
 
-    train(
-        model,
-        train_dataset,
-        valid_dataset,
-        per_device_batch=16,
-        epochs=3,
-        dataset_num_workers=2,
-        collattor=collattor,
-        output_dir="",
-    )
+    # train(
+    #     model,
+    #     train_dataset,
+    #     valid_dataset,
+    #     per_device_batch=16,
+    #     epochs=3,
+    #     dataset_num_workers=2,
+    #     collattor=collattor,
+    #     output_dir="",
+    # )
