@@ -74,5 +74,5 @@ def count_pretrain_token(data_dir: str, workers: int = 8):
 
 
 if __name__ == "__main__":
-    total = count_pretrain_token(data_dir="data/common")
+    total = count_pretrain_token(data_dir="data/common", workers=16)
     print(total)
