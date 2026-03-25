@@ -1,7 +1,7 @@
 import random
 from multiprocessing import Value
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Sequence
 
 import pyarrow.parquet as pq
 import torch
@@ -24,7 +24,7 @@ def create_pretraining_splits(
     split_dir = Path(split_dir)
 
     train_path = split_dir / "train.txt"
-    valid_path = split_dir / "valid.txt"
+    valid_path = split_dir / "eval.txt"
     test_path = split_dir / "test.txt"
 
     if not overwrite and (train_path.exists() or valid_path.exists() or test_path.exists()):
@@ -82,7 +82,7 @@ def load_pretraining_splits(
         return [Path(line.strip()) for line in lines if line.strip()]
 
     train_files = _read_split_file(split_dir / "train.txt")
-    valid_files = _read_split_file(split_dir / "valid.txt")
+    valid_files = _read_split_file(split_dir / "eval.txt")
     test_files = _read_split_file(split_dir / "test.txt")
 
     if not train_files:
@@ -94,7 +94,7 @@ def load_pretraining_splits(
 class PretrainingDataset(IterableDataset):
     def __init__(
         self,
-        files: list[str | Path],
+        files: Sequence[str | Path],
         tokenizer: PreTrainedTokenizerFast,
         max_seq_len: int,
         *,

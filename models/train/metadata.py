@@ -2,7 +2,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pyarrow.parquet as pq
-from transformers import AutoTokenizer, PreTrainedTokenizerFast
+from transformers import AutoTokenizer
 
 
 def count_text(fp: str) -> int:
@@ -20,7 +20,10 @@ def count_text(fp: str) -> int:
 
 
 def count_text_rows(data_dir: str, workers: int = 8) -> int:
-    files = list(Path(data_dir).rglob("*.parquet"))
+    files_dir = []
+    with open(data_dir, mode="r", encoding="utf-8") as f:
+        files_dir = [line.strip("\n") for line in f.readlines()]
+    files = [Path(file) for file in files_dir]
     with ProcessPoolExecutor(max_workers=workers) as ex:
         return sum(ex.map(count_text, map(str, files)))
 
@@ -73,5 +76,6 @@ def count_pretrain_token(data_dir: str, workers: int = 8):
 
 
 if __name__ == "__main__":
-    total = count_pretrain_token(data_dir="data/common", workers=16)
-    print(total)
+    train_total = count_text_rows("models/train/manifest/train.txt")
+    eval_total = count_text_rows("models/train/manifest/eval.txt", workers=1)
+    print(train_total, eval_total)

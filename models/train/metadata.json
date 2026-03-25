@@ -1,4 +1,5 @@
 {
-  "num_pretrain_samples": 17790513,
-  "num_pretain_tokens": 1
+  "train_num_pretrain_samples": 17790513,
+  "eval_num_pretrain_samples": 17790513,
+  "num_pretain_tokens": 31673475749
 }
