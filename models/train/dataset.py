@@ -91,7 +91,7 @@ def load_pretraining_splits(
     return train_files, valid_files, test_files
 
 
-class PretrainingDataset(IterableDataset):
+class FileDataset(IterableDataset):
     def __init__(
         self,
         files: Sequence[str | Path],

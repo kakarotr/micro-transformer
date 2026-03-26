@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 from models.causal_lm import CausalLanguageModel
 from models.config import TransformerConfig
 from models.train.collator import PretrainingCollator
-from models.train.dataset import PretrainingDataset, load_pretraining_splits
+from models.train.dataset import FileDataset, load_pretraining_splits
 from models.train.monitor.monitor_dataclass import MonitorSnapshot
 from models.train.monitor.rich import MetricTracker, RichMonitor, UpdateAccumulator
 from models.train.monitor.utils import get_grad_norm
@@ -18,8 +18,8 @@ from models.train.monitor.utils import get_grad_norm
 
 def train(
     model: nn.Module,
-    train_dataset: PretrainingDataset,
-    valid_dataset: PretrainingDataset,
+    train_dataset: FileDataset,
+    valid_dataset: FileDataset,
     *,
     output_dir: str,
     collattor: PretrainingCollator,
