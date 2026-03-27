@@ -2,7 +2,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from models.config import TransformerConfig
 from models.decoder import Decoder
@@ -50,27 +49,12 @@ class CausalLanguageModel(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        labels: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
     ):
         if attention_mask is None:
-            attention_mask = input_ids != self.pad_token_id
+            attention_mask = (input_ids != self.pad_token_id).long()
 
         hidden_states = self.decoder(input_ids, attention_mask, position_ids)
         logits = self.lm_head(hidden_states)
-
-        loss = None
-        if labels is not None:
-            shift_logits = logits[:, :-1, :].contiguous()
-            shift_labels = labels[:, 1:].contiguous()
-
-            assert attention_mask is not None
-            shift_labels = shift_labels.masked_fill(attention_mask[:, 1:] == 0, -100)
-
-            loss = F.cross_entropy(
-                shift_logits.view(-1, self.vocab_size).float(),
-                shift_labels.view(-1),
-                ignore_index=-100,
-            )
-        return loss, logits
+        return logits

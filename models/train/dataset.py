@@ -91,7 +91,7 @@ def load_pretraining_splits(
     return train_files, valid_files, test_files
 
 
-class FileDataset(IterableDataset):
+class PretrainingDataset(IterableDataset):
     def __init__(
         self,
         files: Sequence[str | Path],
@@ -147,7 +147,7 @@ class FileDataset(IterableDataset):
 
                     while len(token_buffer) - buffer_start >= self.max_seq_len:
                         chunk = token_buffer[buffer_start : buffer_start + self.max_seq_len]
-                        yield self._build_sample(token_ids=chunk, valid_length=self.max_seq_len)
+                        yield self._build_sample(token_ids=chunk)
                         buffer_start += self.max_seq_len
 
                     if buffer_start >= self.compact_threshold and buffer_start >= len(token_buffer) // 2:
@@ -157,10 +157,14 @@ class FileDataset(IterableDataset):
         remaining = len(token_buffer) - buffer_start
         if remaining > 0 and not self.drop_last:
             chunk = token_buffer[buffer_start:]
-            yield self._build_sample(token_ids=chunk, valid_length=remaining)
+            yield self._build_sample(token_ids=chunk)
 
-    def _build_sample(self, token_ids: list[int], valid_length: int) -> dict[str, torch.Tensor | int]:
-        return {"input_ids": torch.tensor(token_ids, dtype=torch.long), "valid_length": valid_length}
+    def _build_sample(self, token_ids: list[int]) -> dict[str, torch.Tensor | int]:
+        input_ids = torch.tensor(token_ids, dtype=torch.long)
+        return {
+            "input_ids": input_ids,
+            "labels": input_ids.clone(),
+        }
 
     def set_epoch(self, epoch: int):
         self._shared_epoch.value = int(epoch)

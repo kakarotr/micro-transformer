@@ -1,6 +1,6 @@
 import json
+import math
 import os
-from math import ceil
 
 import torch
 import torch.distributed as dist
@@ -13,37 +13,41 @@ from transformers import AutoTokenizer
 
 from models.causal_lm import CausalLanguageModel
 from models.config import TransformerConfig
-from models.train.collator import PretrainingCollator
-from models.train.dataset import FileDataset, load_pretraining_splits
+from models.train.collator import Collator
+from models.train.dataset import PretrainingDataset, load_pretraining_splits
+from models.train.loss import compute_loss
 
-per_device_batch_size = 16
-gradient_accumulation_steps = 1
-base_lr = 5e-4
-max_grad_norm: float | None = None
-warmup_ratio = 0.03
-start_factor = 0.1
 
-# [TODO] Token驱动Scheduler、AMP
-if __name__ == "__main__":
-    # 读取配置（数据集、模型）
+def load_config():
+    """读取配置（数据集、模型）"""
     with open("models/train/config_files/metadata.json", mode="r", encoding="utf-8") as f:
         metadata = json.load(f)
     with open("models/train/config_files/0.6B.json", mode="r", encoding="utf-8") as f:
         config = TransformerConfig.model_validate_json(f.read())
 
-    # 判断多卡环境
+    return metadata, config
+
+
+def init_distributed():
+    """判断是否多卡环境并决定是否进行初始化"""
     is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
     if is_distributed:
-        dist.init_process_group(backend="nccl")
+        backend = "nccl" if dist.is_nccl_available() else "gloo"
+        dist.init_process_group(backend=backend)
         local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
         torch.cuda.set_device(local_rank)
         device = torch.device("cuda", local_rank)
     else:
         world_size = 1
+        local_rank = 0
         device = torch.device("cuda")
 
-    # 初始化分词器、模型
+    return is_distributed, world_size, local_rank, device
+
+
+def init_tokenizer_and_model(local_rank: int):
+    """初始化分词器、模型"""
     tokenizer = AutoTokenizer.from_pretrained("weight")
     model = CausalLanguageModel(config=config).to(device)
     if is_distributed:
@@ -55,27 +59,32 @@ if __name__ == "__main__":
             find_unused_parameters=False,
             gradient_as_bucket_view=True,
         )
+    return tokenizer, model
 
-    # 加载训练集、验证集
-    train_num_samples = metadata["train_num_pretrain_samples"]
+
+def load_dataset():
+    """加载训练集、验证集"""
     train_files, eval_files, _ = load_pretraining_splits("models/train/manifest")
-    train_dataset = FileDataset(
+    train_dataset = PretrainingDataset(
         files=train_files,
         tokenizer=tokenizer,
         max_seq_len=config.max_position_embeddings,
         shuffle=True,
         drop_last=True,
     )
-    eval_dataset = FileDataset(
+    eval_dataset = PretrainingDataset(
         files=eval_files,
         tokenizer=tokenizer,
         max_seq_len=config.max_position_embeddings,
         shuffle=False,
         drop_last=False,
     )
+    return train_dataset, eval_dataset
 
-    # 构建DataLoader
-    collator = PretrainingCollator(pad_token_id=tokenizer.pad_token_id, max_seq_len=config.max_position_embeddings)
+
+def load_dataloader():
+    """构建DataLoader"""
+    collator = Collator(pad_token_id=tokenizer.pad_token_id, max_seq_len=config.max_position_embeddings)
     train_dataloader = DataLoader(
         train_dataset,
         collate_fn=collator,
@@ -89,18 +98,35 @@ if __name__ == "__main__":
         shuffle=False,
         drop_last=False,
     )
+    return train_dataloader, eval_dataloader
 
-    num_pretain_tokens = metadata["num_pretain_tokens"]
-    global_batch_size = per_device_batch_size * world_size
-    tokens_per_update = (
-        per_device_batch_size * world_size * gradient_accumulation_steps * config.max_position_embeddings
-    )
-    max_steps = ceil(num_pretain_tokens / tokens_per_update)
 
-    optimizer = optim.AdamW(model.parameters(), lr=base_lr, fused=True, foreach=True)
-    if warmup_ratio > 0.0:
-        warmup_steps = int(max_steps * warmup_ratio)
-        cosine_steps = max(1, max_steps - warmup_steps)
+per_device_batch_size = 16
+gradient_accumulation_steps = 1
+base_lr = 5e-4
+max_grad_norm: float | None = None
+warmup_ratio = 0.03
+start_factor = 0.1
+
+if __name__ == "__main__":
+    metadata, config = load_config()
+
+    is_distributed, world_size, local_rank, device = init_distributed()
+
+    tokenizer, model = init_tokenizer_and_model(local_rank=local_rank)
+
+    train_dataset, eval_dataset = load_dataset()
+
+    train_dataloader, eval_dataloader = load_dataloader()
+
+    optimizer = optim.AdamW(model.parameters(), lr=base_lr, fused=True)
+
+    total_tokens = metadata["num_pretain_tokens"]
+    token_per_update = per_device_batch_size * world_size * config.max_position_embeddings * gradient_accumulation_steps
+    max_steps = math.ceil(total_tokens / token_per_update)
+    warmup_steps = int(max_steps * warmup_ratio)
+    if warmup_steps > 0:
+        cosine_steps = max_steps - warmup_steps
         scheduler = SequentialLR(
             optimizer,
             schedulers=[
@@ -127,11 +153,14 @@ if __name__ == "__main__":
             is_update_step = ((micro_steps + 1) % gradient_accumulation_steps) == 0
             if is_distributed and not is_update_step:
                 with model.no_sync():
-                    loss, _ = model(input_ids, labels, attention_mask)
+                    logits = model(input_ids, attention_mask)
+                    loss = compute_loss(logits, labels)
                     (loss / gradient_accumulation_steps).backward()
             else:
-                loss, _ = model(input_ids, labels, attention_mask)
+                logits = model(input_ids, attention_mask)
+                loss = compute_loss(logits, labels)
                 (loss / gradient_accumulation_steps).backward()
+
             micro_steps += 1
 
             if micro_steps % gradient_accumulation_steps == 0:
@@ -140,9 +169,9 @@ if __name__ == "__main__":
 
                 optimizer.step()
                 scheduler.step()
-                optimizer.zero_grad(set_to_none=True)
-
                 optimizer_steps += 1
+
+                optimizer.zero_grad(set_to_none=True)
 
             if optimizer_steps >= max_steps:
                 break
