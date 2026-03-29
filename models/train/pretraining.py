@@ -1,15 +1,16 @@
 import json
 import math
 import os
+from contextlib import nullcontext
 
 import torch
 import torch.distributed as dist
 import torch.optim as optim
 from safetensors.torch import save_file
-from torch.nn.utils import clip_grad_norm
+from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from models.causal_lm import CausalLanguageModel
 from models.config import TransformerConfig
@@ -62,7 +63,7 @@ def init_tokenizer_and_model(local_rank: int):
     return tokenizer, model
 
 
-def load_dataset():
+def load_dataset(tokenizer: PreTrainedTokenizerFast):
     """加载训练集、验证集"""
     train_files, eval_files, _ = load_pretraining_splits("models/train/manifest")
     train_dataset = PretrainingDataset(
@@ -82,48 +83,27 @@ def load_dataset():
     return train_dataset, eval_dataset
 
 
-def load_dataloader():
+def load_dataloader(tokenizer: PreTrainedTokenizerFast):
     """构建DataLoader"""
-    collator = Collator(pad_token_id=tokenizer.pad_token_id, max_seq_len=config.max_position_embeddings)
+    collator = Collator(pad_token_id=tokenizer.pad_token_id, max_seq_len=config.max_position_embeddings)  # type: ignore
     train_dataloader = DataLoader(
         train_dataset,
         collate_fn=collator,
-        batch_size=per_device_batch_size,
+        batch_size=per_device_train_batch_size,
         drop_last=True,
     )
     eval_dataloader = DataLoader(
         eval_dataset,
         collate_fn=collator,
-        batch_size=per_device_batch_size,
+        batch_size=per_device_eval_batch_size,
         shuffle=False,
         drop_last=False,
     )
     return train_dataloader, eval_dataloader
 
 
-per_device_batch_size = 16
-gradient_accumulation_steps = 1
-base_lr = 5e-4
-max_grad_norm: float | None = None
-warmup_ratio = 0.03
-start_factor = 0.1
-
-if __name__ == "__main__":
-    metadata, config = load_config()
-
-    is_distributed, world_size, local_rank, device = init_distributed()
-
-    tokenizer, model = init_tokenizer_and_model(local_rank=local_rank)
-
-    train_dataset, eval_dataset = load_dataset()
-
-    train_dataloader, eval_dataloader = load_dataloader()
-
-    optimizer = optim.AdamW(model.parameters(), lr=base_lr, fused=True)
-
-    total_tokens = metadata["num_pretain_tokens"]
-    token_per_update = per_device_batch_size * world_size * config.max_position_embeddings * gradient_accumulation_steps
-    max_steps = math.ceil(total_tokens / token_per_update)
+def get_scheduler(max_steps: int):
+    """LR 调度器"""
     warmup_steps = int(max_steps * warmup_ratio)
     if warmup_steps > 0:
         cosine_steps = max_steps - warmup_steps
@@ -137,6 +117,44 @@ if __name__ == "__main__":
         )
     else:
         scheduler = CosineAnnealingLR(optimizer, T_max=max_steps)
+    return scheduler
+
+
+# 训练相关超参数
+per_device_train_batch_size = 16
+gradient_accumulation_steps = 1
+base_lr = 5e-4
+max_grad_norm: float | None = None
+warmup_ratio = 0.03
+start_factor = 0.1
+
+# 验证相关参数
+per_device_eval_batch_size = 16
+eval_steps_ratio = 0.1
+
+
+if __name__ == "__main__":
+    metadata, config = load_config()
+
+    is_distributed, world_size, local_rank, device = init_distributed()
+
+    if (not torch.cuda.is_available()) or (not torch.cuda.is_bf16_supported()):
+        raise RuntimeError("Current device does not support bfloat16")
+
+    tokenizer, model = init_tokenizer_and_model(local_rank=local_rank)
+
+    train_dataset, eval_dataset = load_dataset(tokenizer)
+
+    train_dataloader, eval_dataloader = load_dataloader(tokenizer)
+
+    optimizer = optim.AdamW(model.parameters(), lr=base_lr, fused=True)
+
+    total_tokens = metadata["num_pretain_tokens"]
+    token_per_update = (
+        per_device_train_batch_size * world_size * config.max_position_embeddings * gradient_accumulation_steps
+    )
+    max_steps = math.ceil(total_tokens / token_per_update)
+    scheduler = get_scheduler(max_steps=max_steps)
 
     micro_steps = 0
     optimizer_steps = 0
@@ -151,35 +169,34 @@ if __name__ == "__main__":
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
 
             is_update_step = ((micro_steps + 1) % gradient_accumulation_steps) == 0
-            if is_distributed and not is_update_step:
-                with model.no_sync():
+            sync_context = model.no_sync() if is_distributed and not is_update_step else nullcontext()  # type: ignore
+
+            with sync_context:
+                with torch.autocast("cuda", dtype=torch.bfloat16):
                     logits = model(input_ids, attention_mask)
                     loss = compute_loss(logits, labels)
-                    (loss / gradient_accumulation_steps).backward()
-            else:
-                logits = model(input_ids, attention_mask)
-                loss = compute_loss(logits, labels)
-                (loss / gradient_accumulation_steps).backward()
 
-            micro_steps += 1
+                loss = loss / gradient_accumulation_steps
+                loss.backward()
+
+                micro_steps += 1
 
             if micro_steps % gradient_accumulation_steps == 0:
                 if max_grad_norm is not None:
-                    clip_grad_norm(model.parameters(), max_norm=max_grad_norm)
+                    clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
                 optimizer.step()
                 scheduler.step()
                 optimizer_steps += 1
 
                 optimizer.zero_grad(set_to_none=True)
-
             if optimizer_steps >= max_steps:
                 break
         epoch += 1
 
     is_main_process = (not is_distributed) or dist.get_rank() == 0
     if is_main_process:
-        state_dict = model.module.state_dict() if is_distributed else model.state_dict()
+        state_dict = model.module.state_dict() if is_distributed else model.state_dict()  # type:ignore
         save_file(state_dict, "weight/model.safetensors")
 
     if is_distributed:
