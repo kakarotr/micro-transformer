@@ -405,6 +405,7 @@ def train(
         eval_steps_ratio=eval_steps_ratio,
         logging_steps=logging_steps,
         output_path=output_path,
+        tensorboard_log_dir="/workspace",
     )
     trainer.train()
 
