@@ -381,7 +381,7 @@ class PretrainingTrainer:
 @click.option("--gradient_accumulation_steps", default=1, type=int)
 @click.option("--warmup_ratio", default=0.03, type=float)
 @click.option("--warmup_start_factor", default=0.1, type=float)
-@click.option("--max_grad_norm", default=None, type=float)
+@click.option("--max_grad_norm", default=1.0, type=float)
 @click.option("--eval_steps_ratio", default=0.1, type=float)
 @click.option("--logging_steps", default=100, type=int)
 @click.option("--output_path", default="weight", type=str)
