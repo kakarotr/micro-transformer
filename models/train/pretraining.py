@@ -350,11 +350,9 @@ class PretrainingTrainer:
 if __name__ == "__main__":
     trainer = PretrainingTrainer(
         metadata_path="models/train/config_files/metadata.json",
-        model_config_path="models/train/config_files/0.6B.json",
+        model_config_path="models/train/config_files/1B.json",
         model_path="weight",
         manifest_path="models/train/manifest",
-        per_device_train_batch_size=2,
-        per_device_eval_batch_size=2,
-        gradient_accumulation_steps=8,
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=16,
     )
-    trainer.train()

@@ -34,7 +34,7 @@ class TransformerConfig(BaseModel):
             )
         return self
 
-    def compute_model_size(self):
+    def compute_size(self):
         attention_size = (
             self.hidden_size * self.hidden_size
             + self.hidden_size * (self.hidden_size // self.num_attention_heads) * self.num_attention_heads * 2
