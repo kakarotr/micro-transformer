@@ -370,7 +370,12 @@ class PretrainingTrainer:
         return mean_loss
 
 
-@click.command()
+@click.command(
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    }
+)
 @click.option("--per_device_train_batch_size", default=16, type=int)
 @click.option("--per_device_eval_batch_size", default=8, type=int)
 @click.option("--gradient_accumulation_steps", default=1, type=int)
@@ -380,7 +385,9 @@ class PretrainingTrainer:
 @click.option("--eval_steps_ratio", default=0.1, type=float)
 @click.option("--logging_steps", default=100, type=int)
 @click.option("--output_path", default="weight", type=str)
+@click.pass_context
 def train(
+    ctx,
     per_device_train_batch_size,
     per_device_eval_batch_size,
     gradient_accumulation_steps,
