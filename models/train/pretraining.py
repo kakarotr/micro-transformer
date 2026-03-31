@@ -353,5 +353,8 @@ if __name__ == "__main__":
         model_config_path="models/train/config_files/0.6B.json",
         model_path="weight",
         manifest_path="models/train/manifest",
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
+        gradient_accumulation_steps=8,
     )
     trainer.train()
