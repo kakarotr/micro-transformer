@@ -21,3 +21,27 @@ def compute_loss(
         ignore_index=ignore_index,
     )
     return loss
+
+
+def eval_compute_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    ignore_index: int = -100,
+):
+    shift_logits = logits[:, :-1, :].contiguous()
+    shift_labels = labels[:, 1:].contiguous()
+
+    flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1)).float()
+    flat_shift_labels = shift_labels.view(-1)
+
+    loss = F.cross_entropy(
+        flat_shift_logits,
+        flat_shift_labels,
+        ignore_index=ignore_index,
+        reduction="sum",
+    )
+
+    valid_mask = flat_shift_labels.ne(ignore_index)
+    valid_token_count = valid_mask.sum()
+
+    return loss, valid_token_count
