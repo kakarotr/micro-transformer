@@ -1,0 +1,24 @@
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+
+class TrainingArguments(BaseModel):
+    output_dir: Annotated[str, Field(description="模型权重输出目录")] = "weight"
+    learning_rate: Annotated[float, Field(description="优化器的基础学习率")] = 5e-4
+    per_device_train_batch_size: Annotated[int, Field(description="单卡训练时每个 step 的 batch size")] = 8
+    per_device_eval_batch_size: Annotated[int, Field(description="单卡评估时的 batch size")] = 8
+    max_steps: Annotated[int, Field(description="最大训练步数")] = -1
+    num_train_epochs: Annotated[int, Field(description="训练轮数")] = -1
+    gradient_accumulation_steps: Annotated[int, Field(description="梯度累积步数")] = 1
+    max_grad_norm: Annotated[float, Field(description="梯度裁剪阈值")] = 1.0
+    warmup_steps_ratio: Annotated[float, Field(description="warmup 阶段占总训练步数的比例")] = 0.03
+    warmup_start_factor: Annotated[float, Field(description="warmup 起始学习率系数")] = 0.1
+    eval_steps_ratio: Annotated[float, Field(description="评估间隔占总训练步数的比例")] = 0.1
+    logging_steps: Annotated[int, Field(description="训练日志打印间隔")] = 100
+    save_steps: Annotated[int, Field(description="模型保存间隔")] = 500
+    tensorboard_log_dir: Annotated[str, Field(description="TensorBoard 日志输出目录")] = "/workspace"
+    tensorboard_flush_secs: Annotated[int, Field(description="TensorBoard 写入磁盘的刷新间隔（秒）")] = 30
+
+    warmup_steps: int = Field(default=0, exclude=True)
+    eval_steps: int = Field(default=0, exclude=True)
