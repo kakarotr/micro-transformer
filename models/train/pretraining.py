@@ -2,6 +2,7 @@ import json
 import math
 import os
 import time
+from argparse import ArgumentParser
 from collections import deque
 from contextlib import nullcontext
 from datetime import datetime
@@ -359,36 +360,37 @@ class PretrainingTrainer:
         self.writer.flush()
 
 
-@click.command(
-    context_settings={
-        "ignore_unknown_options": True,
-        "allow_extra_args": True,
-    }
-)
-@click.option("--per_device_train_batch_size", default=16, type=int)
-@click.option("--per_device_eval_batch_size", default=8, type=int)
-@click.option("--gradient_accumulation_steps", default=1, type=int)
-@click.option("--warmup_ratio", default=0.03, type=float)
-@click.option("--warmup_start_factor", default=0.1, type=float)
-@click.option("--max_grad_norm", default=1.0, type=float)
-@click.option("--eval_steps_ratio", default=0.1, type=float)
-@click.option("--logging_steps", default=100, type=int)
-@click.option("--output_path", default="weight", type=str)
-@click.pass_context
-def train(
-    ctx,
-    per_device_train_batch_size,
-    per_device_eval_batch_size,
-    gradient_accumulation_steps,
-    warmup_ratio,
-    warmup_start_factor,
-    max_grad_norm,
-    eval_steps_ratio,
-    logging_steps,
-    output_path,
-):
-    pass
+def build_parser() -> ArgumentParser:
+    parser = ArgumentParser(description="训练脚本参数")
+
+    for name, field in TrainingArguments.model_fields.items():
+        arg_name = f"--{name}"
+        arg_type = field.annotation
+        default = field.default
+        help_text = field.description or ""
+
+        parser.add_argument(
+            arg_name,
+            type=arg_type,  # type: ignore
+            default=default,
+            help=f"{help_text} (default: {default})",
+        )
+
+    return parser
+
+
+def parse_args() -> TrainingArguments:
+    parser = build_parser()
+    namespace = parser.parse_args()
+    return TrainingArguments(**vars(namespace))
 
 
 if __name__ == "__main__":
-    train()
+    arguments = parse_args()
+    trainer = PretrainingTrainer(
+        model_path="weight",
+        arguments=arguments,
+        data_dir="data/pretraining",
+        output_path="weight",
+        log_dir="logs",
+    )

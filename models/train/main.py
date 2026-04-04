@@ -2,11 +2,6 @@ import math
 from typing import Annotated
 
 from pydantic import BaseModel, Field, model_validator
-from transformers import Trainer
-from transformers import TrainingArguments as TrainingArguments2
-
-Trainer()
-TrainingArguments2()
 
 
 class TrainingArguments(BaseModel):
