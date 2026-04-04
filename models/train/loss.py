@@ -1,47 +1,48 @@
 import torch
 import torch.nn.functional as F
+from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
+
+loss_fn = LigerFusedLinearCrossEntropyLoss()
 
 
 def compute_loss(
-    logits: torch.Tensor,
+    hidden_states: torch.Tensor,
+    lm_head_weight: torch.Tensor,
     labels: torch.Tensor,
     ignore_index: int = -100,
 ):
-    shift_logits = logits[:, :-1, :].contiguous()
+    shift_hidden_states = hidden_states[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
 
-    valid_mask = shift_labels.ne(ignore_index)
-    if not valid_mask.any():
-        # 当出现labels全是ignore_index时使用下面的方式返回来保留计算图, 避免backward出现问题
-        return shift_logits.sum() * 0.0
+    flat_hidden_states = shift_hidden_states.view(-1, shift_hidden_states.size(-1))
+    flat_labels = shift_labels.view(-1)
 
-    loss = F.cross_entropy(
-        shift_logits.view(-1, shift_logits.size(-1)).float(),
-        shift_labels.view(-1),
-        ignore_index=ignore_index,
-    )
-    return loss
+    if not flat_labels.ne(ignore_index).any():
+        return flat_hidden_states.sum() * 0.0
+
+    return loss_fn(lm_head_weight, flat_hidden_states, flat_labels, ignore_index=ignore_index)
 
 
+@torch.no_grad()
 def eval_compute_loss(
-    logits: torch.Tensor,
+    hidden_states: torch.Tensor,
+    lm_head_weight: torch.Tensor,
     labels: torch.Tensor,
     ignore_index: int = -100,
 ):
-    shift_logits = logits[:, :-1, :].contiguous()
+    shift_hidden = hidden_states[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
 
-    flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1)).float()
-    flat_shift_labels = shift_labels.view(-1)
+    flat_hidden = shift_hidden.view(-1, shift_hidden.size(-1))
+    flat_labels = shift_labels.view(-1)
+
+    flat_logits = F.linear(flat_hidden.float(), lm_head_weight.float())
 
     loss = F.cross_entropy(
-        flat_shift_logits,
-        flat_shift_labels,
+        flat_logits,
+        flat_labels,
         ignore_index=ignore_index,
         reduction="sum",
     )
-
-    valid_mask = flat_shift_labels.ne(ignore_index)
-    valid_token_count = valid_mask.sum()
-
+    valid_token_count = flat_labels.ne(ignore_index).sum()
     return loss, valid_token_count

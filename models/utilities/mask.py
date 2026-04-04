@@ -48,7 +48,7 @@ def create_padding_mask(
         if input_ids.ndim != 2:
             raise ValueError(f"input_ids must be 2D [batch_size, seq_len], got {tuple(input_ids.shape)}")
 
-        mask = input_ids != pad_token_id
+        mask = (input_ids != pad_token_id).to(device)
         return mask.unsqueeze(1).unsqueeze(1)
 
     assert attention_mask is not None

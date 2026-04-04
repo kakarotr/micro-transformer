@@ -37,14 +37,15 @@ class DecoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_ids: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | None = None,
+        is_causal: bool = True,
         past_key_values: tuple[torch.Tensor, torch.Tensor] | None = None,
         use_cache: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
         if use_cache or past_key_values is not None:
             raise NotImplementedError("KV cache path is reserved but not implemented yet.")
         residual = hidden_states
-        hidden_states = self.attention(self.attn_norm(hidden_states), position_ids, attn_mask)
+        hidden_states = self.attention(self.attn_norm(hidden_states), position_ids, attn_mask, is_causal)
         hidden_states = residual + self.attn_dropout(hidden_states)
 
         residual = hidden_states
@@ -95,10 +96,11 @@ class Decoder(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
         past_key_values: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         use_cache: bool = False,
+        use_padding_mask: bool = False,
     ) -> torch.Tensor:
         _, seq_len = input_ids.size()
 
@@ -110,36 +112,39 @@ class Decoder(nn.Module):
                 f"seq_len ({seq_len}) exceeds max_position_embeddings ({self.rope.max_position_embeddings})"
             )
 
-        if attention_mask is not None:
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids, dtype=torch.long)
+        else:
             if attention_mask.ndim != 2 or attention_mask.shape != input_ids.shape:
                 raise ValueError("attention_mask must have same shape as input_ids")
-
-        if position_ids is not None:
-            if position_ids.ndim not in (1, 2):
-                raise ValueError("position_ids must be 1D or 2D")
-            if position_ids.shape[-1] != seq_len:
-                raise ValueError("position_ids.shape[-1] must equal seq_len")
-            if (position_ids < 0).any() or (position_ids >= self.rope.max_position_embeddings).any():
-                raise ValueError("position_ids out of range")
-
-        device = input_ids.device
 
         if position_ids is None:
             position_ids = attention_mask.cumsum(dim=-1) - 1
             position_ids = position_ids.clamp_min(0)
             position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        else:
+            if position_ids.ndim not in (1, 2):
+                raise ValueError("position_ids must be 1D or 2D")
+            if position_ids.shape[-1] != seq_len:
+                raise ValueError("position_ids.shape[-1] must equal seq_len")
+            # if (position_ids < 0).any() or (position_ids >= self.rope.max_position_embeddings).any():
+            #     raise ValueError("position_ids out of range")
+
+        device = input_ids.device
 
         hidden_states = self.embedd_dropout(self.embeddings(input_ids))
-        causal_mask = create_causal_mask(seq_len=seq_len, device=device)
-        has_padding = not attention_mask.all()
-        if has_padding:
+
+        if use_padding_mask:
+            causal_mask = create_causal_mask(seq_len, device=device)
             padding_mask = create_padding_mask(attention_mask=attention_mask, device=device)
             attn_mask = causal_mask & padding_mask
+            is_causal = False
         else:
-            attn_mask = causal_mask
+            attn_mask = None
+            is_causal = True
 
         for idx, layer in enumerate(self.layers):
             layer_past = None if past_key_values is None else past_key_values[idx]
-            hidden_states, _ = layer(hidden_states, position_ids, attn_mask, layer_past, use_cache)
+            hidden_states, _ = layer(hidden_states, position_ids, attn_mask, is_causal, layer_past, use_cache)
 
         return self.norm(hidden_states)

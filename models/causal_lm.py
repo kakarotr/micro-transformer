@@ -51,10 +51,15 @@ class CausalLanguageModel(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        use_padding_mask: bool = False,
     ):
         if attention_mask is None:
             attention_mask = (input_ids != self.pad_token_id).long()
 
-        hidden_states = self.decoder(input_ids, attention_mask, position_ids)
-        logits = self.lm_head(hidden_states)
-        return logits
+        hidden_states = self.decoder(
+            input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            use_padding_mask=use_padding_mask,
+        )
+        return hidden_states

@@ -1,6 +1,12 @@
+import math
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from transformers import Trainer
+from transformers import TrainingArguments as TrainingArguments2
+
+Trainer()
+TrainingArguments2()
 
 
 class TrainingArguments(BaseModel):
@@ -17,8 +23,19 @@ class TrainingArguments(BaseModel):
     eval_steps_ratio: Annotated[float, Field(description="评估间隔占总训练步数的比例")] = 0.1
     logging_steps: Annotated[int, Field(description="训练日志打印间隔")] = 100
     save_steps: Annotated[int, Field(description="模型保存间隔")] = 500
-    tensorboard_log_dir: Annotated[str, Field(description="TensorBoard 日志输出目录")] = "/workspace"
-    tensorboard_flush_secs: Annotated[int, Field(description="TensorBoard 写入磁盘的刷新间隔（秒）")] = 30
+    log_dir: Annotated[str, Field(description="TensorBoard 日志输出目录")] = "/workspace"
+    flush_secs: Annotated[int, Field(description="TensorBoard 写入磁盘的刷新间隔（秒）")] = 30
 
-    warmup_steps: int = Field(default=0, exclude=True)
-    eval_steps: int = Field(default=0, exclude=True)
+    # 派生字段：初始化后自动计算
+    warmup_steps: Annotated[int, Field(description="warmup 的实际步数")] = 0
+    eval_steps: Annotated[int, Field(description="实际评估间隔步数")] = 0
+
+    @model_validator(mode="after")
+    def compute_steps(self):
+        if self.max_steps > 0:
+            self.warmup_steps = max(1, math.ceil(self.max_steps * self.warmup_steps_ratio))
+            self.eval_steps = max(1, math.ceil(self.max_steps * self.eval_steps_ratio))
+        else:
+            self.warmup_steps = 0
+            self.eval_steps = 0
+        return self

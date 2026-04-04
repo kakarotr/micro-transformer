@@ -32,7 +32,8 @@ class MultiHeadAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_ids: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | None = None,
+        is_causal: bool = True,
     ) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.size()
 
@@ -54,9 +55,13 @@ class MultiHeadAttention(nn.Module):
             k = k.repeat_interleave(self.n_rep, 1)
             v = v.repeat_interleave(self.n_rep, 1)
 
-        if attn_mask.dtype != torch.bool:
-            raise ValueError("attn_mask must be bool tensor")
-        attn_mask = attn_mask.to(device=q.device)
+        if attn_mask is not None:
+            if attn_mask.dtype != torch.bool:
+                raise ValueError("attn_mask must be bool tensor")
+            attn_mask = attn_mask.to(device=q.device)
+
+        if is_causal and attn_mask is not None:
+            raise ValueError("When is_causal=True, attn_mask must be None")
 
         context_vectors = F.scaled_dot_product_attention(
             query=q,
@@ -64,7 +69,7 @@ class MultiHeadAttention(nn.Module):
             value=v,
             attn_mask=attn_mask,
             dropout_p=self.dropout_prob if self.training else 0.0,
-            is_causal=False,
+            is_causal=is_causal,
         )
         context_vectors = context_vectors.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
         return self.o_proj(context_vectors)

@@ -1,0 +1,2 @@
+pip install transformers tokenizers liger-kernel triton
+pip install torch --index-url https://download.pytorch.org/whl/cu126
