@@ -1,4 +1,5 @@
 import math
+from argparse import ArgumentParser
 from typing import Annotated
 
 from pydantic import BaseModel, Field, model_validator
@@ -34,3 +35,37 @@ class TrainingArguments(BaseModel):
             self.warmup_steps = 0
             self.eval_steps = 0
         return self
+
+    @model_validator(mode="after")
+    def validate_steps_and_epochs(self):
+        if self.max_steps == -1 and self.num_train_epochs == -1:
+            raise ValueError(
+                "Invalid configuration: 'max_steps' and 'num_train_epochs' cannot both be -1. "
+                "At least one of them must be set to a positive value."
+            )
+        return self
+
+
+def build_parser() -> ArgumentParser:
+    parser = ArgumentParser(description="训练脚本参数")
+
+    for name, field in TrainingArguments.model_fields.items():
+        arg_name = f"--{name}"
+        arg_type = field.annotation
+        default = field.default
+        help_text = field.description or ""
+
+        parser.add_argument(
+            arg_name,
+            type=arg_type,  # type: ignore
+            default=default,
+            help=f"{help_text} (default: {default})",
+        )
+
+    return parser
+
+
+def parse_args() -> TrainingArguments:
+    parser = build_parser()
+    namespace = parser.parse_args()
+    return TrainingArguments(**vars(namespace))

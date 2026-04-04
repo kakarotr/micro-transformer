@@ -24,7 +24,7 @@ from models.causal_lm import CausalLanguageModel
 from models.config import TransformerConfig
 from models.train.dataset import PackedTokenDataset
 from models.train.loss import compute_loss, eval_compute_loss
-from models.train.main import TrainingArguments
+from models.train.main import TrainingArguments, parse_args
 
 
 class PretrainingTrainer:
@@ -358,31 +358,6 @@ class PretrainingTrainer:
         self.writer.add_scalar("eval/ppl", self.monitor_data["last_eval_ppl"], optimizer_steps)
         self.writer.add_scalar("eval/epoch", epoch, optimizer_steps)
         self.writer.flush()
-
-
-def build_parser() -> ArgumentParser:
-    parser = ArgumentParser(description="训练脚本参数")
-
-    for name, field in TrainingArguments.model_fields.items():
-        arg_name = f"--{name}"
-        arg_type = field.annotation
-        default = field.default
-        help_text = field.description or ""
-
-        parser.add_argument(
-            arg_name,
-            type=arg_type,  # type: ignore
-            default=default,
-            help=f"{help_text} (default: {default})",
-        )
-
-    return parser
-
-
-def parse_args() -> TrainingArguments:
-    parser = build_parser()
-    namespace = parser.parse_args()
-    return TrainingArguments(**vars(namespace))
 
 
 if __name__ == "__main__":
