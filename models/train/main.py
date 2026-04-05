@@ -1,6 +1,7 @@
 import math
-from argparse import ArgumentParser
-from typing import Annotated
+from argparse import ArgumentParser, BooleanOptionalAction
+from collections import deque
+from typing import Annotated, Deque
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,6 +22,7 @@ class TrainingArguments(BaseModel):
     save_steps: Annotated[int, Field(description="模型保存间隔")] = 500
     log_dir: Annotated[str, Field(description="TensorBoard 日志输出目录")] = "/workspace"
     flush_secs: Annotated[int, Field(description="TensorBoard 写入磁盘的刷新间隔（秒）")] = 30
+    use_torch_complie: Annotated[bool, Field(description="是否使用 torch.complie 优化")] = True
 
     # 派生字段：初始化后自动计算
     warmup_steps: Annotated[int, Field(description="warmup 的实际步数")] = 0
@@ -46,6 +48,17 @@ class TrainingArguments(BaseModel):
         return self
 
 
+class MetricsData(BaseModel):
+    last_train_loss: float = 0.0
+    last_eval_loss: float = 0.0
+    last_eval_ppl: float = 0.0
+    last_grad_norm: float = 0.0
+    recent_train_losses: Deque[float] = Field(default_factory=deque)
+    recent_tokens_per_sec: Deque[float] = Field(default_factory=deque)
+    start_time: float = 0.0
+    last_update_time: float = 0.0
+
+
 def build_parser() -> ArgumentParser:
     parser = ArgumentParser(description="训练脚本参数")
 
@@ -55,12 +68,20 @@ def build_parser() -> ArgumentParser:
         default = field.default
         help_text = field.description or ""
 
-        parser.add_argument(
-            arg_name,
-            type=arg_type,  # type: ignore
-            default=default,
-            help=f"{help_text} (default: {default})",
-        )
+        if arg_type is bool:
+            parser.add_argument(
+                arg_name,
+                action=BooleanOptionalAction,
+                default=default,
+                help=f"{help_text} (default: {default})",
+            )
+        else:
+            parser.add_argument(
+                arg_name,
+                type=arg_type,  # type: ignore
+                default=default,
+                help=f"{help_text} (default: {default})",
+            )
 
     return parser
 

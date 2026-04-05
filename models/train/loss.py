@@ -1,8 +1,16 @@
 import torch
 import torch.nn.functional as F
-from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
 
-loss_fn = LigerFusedLinearCrossEntropyLoss()
+try:
+    from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
+
+    print("use LigerFusedLinearCrossEntropyLoss")
+except ImportError:
+    LigerFusedLinearCrossEntropyLoss = None
+
+    print("use torch.CrossEntropyLoss")
+
+loss_fn = LigerFusedLinearCrossEntropyLoss() if LigerFusedLinearCrossEntropyLoss is not None else None
 
 
 def compute_loss(
@@ -20,7 +28,15 @@ def compute_loss(
     if not flat_labels.ne(ignore_index).any():
         return flat_hidden_states.sum() * 0.0
 
-    return loss_fn(lm_head_weight, flat_hidden_states, flat_labels, ignore_index=ignore_index)
+    if loss_fn is not None:
+        return loss_fn(lm_head_weight, flat_hidden_states, flat_labels, ignore_index=ignore_index)
+
+    flat_logits = F.linear(flat_hidden_states.float(), lm_head_weight.float())
+    return F.cross_entropy(
+        flat_logits,
+        flat_labels,
+        ignore_index=ignore_index,
+    )
 
 
 @torch.no_grad()
@@ -45,4 +61,5 @@ def eval_compute_loss(
         reduction="sum",
     )
     valid_token_count = flat_labels.ne(ignore_index).sum()
+    return loss, valid_token_count
     return loss, valid_token_count

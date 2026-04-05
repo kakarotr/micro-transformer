@@ -2,29 +2,39 @@ import json
 import math
 import os
 import time
-from argparse import ArgumentParser
 from collections import deque
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+from typing import no_type_check
 
-import click
 import torch
 import torch.distributed as dist
 import torch.optim as optim
+from rich.console import Console, Group
+from rich.live import Live
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskID,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.text import Text
 from safetensors.torch import save_file
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import AutoTokenizer
 
 from models.causal_lm import CausalLanguageModel
 from models.config import TransformerConfig
 from models.train.dataset import PackedTokenDataset
 from models.train.loss import compute_loss, eval_compute_loss
-from models.train.main import TrainingArguments, parse_args
+from models.train.main import MetricsData, TrainingArguments, parse_args
 
 
 class PretrainingTrainer:
@@ -35,8 +45,6 @@ class PretrainingTrainer:
         arguments: TrainingArguments,
         data_dir: str,
         output_path: str,
-        log_dir: str = "/workspace",
-        log_flush_secs: int = 30,
     ):
         self.arguments = arguments
         self.output_path = output_path
@@ -55,103 +63,137 @@ class PretrainingTrainer:
         self.optimizer = optim.AdamW(self.model.parameters(), lr=self.arguments.learning_rate, fused=True)
         self.scheduler = self._init_scheduler()
 
-        self._init_tensorboard(log_dir, log_flush_secs)
-        self.monitor_data = {
-            "last_train_loss": 0.0,
-            "last_eval_loss": 0.0,
-            "last_eval_ppl": 0.0,
-            "last_grad_norm": 0.0,
-            "recent_train_losses": deque(maxlen=100),
-            "start_time": time.perf_counter(),
-        }
+        # 指标
+        self.console = Console() if self.is_main_process else None
+        self.live: Live | None = None
+        self.progress: Progress | None = None
+        self.progress_task_id: TaskID | None = None
+        self.display_mode = "train"
+        metric_window = max(int(self.arguments.logging_steps), 1)
+        now = time.perf_counter()
+        self.monitor_data = MetricsData(
+            recent_train_losses=deque(maxlen=metric_window),
+            recent_tokens_per_sec=deque(maxlen=metric_window),
+            start_time=now,
+            last_update_time=now,
+        )
 
     def __call__(self):
         micro_steps = 0
         optimizer_steps = 0
         epoch = 0
-        self.monitor_data["start_time"] = time.perf_counter()
         self.optimizer.zero_grad(set_to_none=True)
         accum_loss_sum = 0.0
         accum_token_count = 0
+        self.monitor_data.start_time = time.perf_counter()
+        self.monitor_data.last_update_time = self.monitor_data.start_time
 
-        while optimizer_steps < self.arguments.max_steps:
-            if self.train_sampler is not None:
-                self.train_sampler.set_epoch(epoch)
-            for batch in self.train_dataloader:
-                input_ids = batch.to(device=self.device, non_blocking=True)
-                labels = input_ids
+        with self._live_context():
+            self._refresh_live(optimizer_steps)
 
-                is_update_step = ((micro_steps + 1) % self.arguments.gradient_accumulation_steps) == 0
-                sync_context = self.model.no_sync() if self.is_distributed and not is_update_step else nullcontext()
+            while optimizer_steps < self.arguments.max_steps:
+                if self.train_sampler is not None:
+                    self.train_sampler.set_epoch(epoch)
 
-                with sync_context:
-                    with torch.autocast("cuda", dtype=torch.bfloat16):
-                        hidden_states = self.model(input_ids)
-                        lm_head_weight = (
-                            self.model.lm_head.weight if not self.is_distributed else self.model.module.lm_head.weight
-                        )
-                        raw_loss = compute_loss(hidden_states, lm_head_weight, labels)
+                for batch in self.train_dataloader:
+                    input_ids = batch.to(device=self.device, non_blocking=True)
+                    labels = input_ids
 
-                    valid_token_count = labels[:, 1:].ne(-100).sum().item()
-                    accum_loss_sum += raw_loss.detach().item() * valid_token_count
-                    accum_token_count += valid_token_count
+                    is_update_step = ((micro_steps + 1) % self.arguments.gradient_accumulation_steps) == 0
+                    sync_context = self.model.no_sync() if self.is_distributed and not is_update_step else nullcontext()
 
-                    loss = raw_loss / self.arguments.gradient_accumulation_steps
-                    loss.backward()
-                    micro_steps += 1
+                    with sync_context:
+                        with torch.autocast("cuda", dtype=torch.bfloat16):
+                            hidden_states = self.model(input_ids)
+                            lm_head_weight = (
+                                self.model.lm_head.weight
+                                if not self.is_distributed
+                                else self.model.module.lm_head.weight
+                            )
+                            raw_loss = compute_loss(hidden_states, lm_head_weight, labels)
 
-                    if micro_steps % self.arguments.gradient_accumulation_steps == 0:
-                        train_loss = accum_loss_sum / max(accum_token_count, 1)
-                        self.monitor_data["last_train_loss"] = train_loss
-                        self.monitor_data["recent_train_losses"].append(train_loss)
-                        accum_loss_sum = 0.0
-                        accum_token_count = 0
+                        valid_token_count = labels[:, 1:].ne(-100).sum().item()
+                        accum_loss_sum += raw_loss.detach().item() * valid_token_count
+                        accum_token_count += valid_token_count
 
-                        grad_norm = clip_grad_norm_(
-                            self.model.parameters(),
-                            max_norm=self.arguments.max_grad_norm if self.arguments.max_grad_norm else float("inf"),
-                        )
-                        self.monitor_data["last_grad_norm"] = grad_norm.item()
+                        loss = raw_loss / self.arguments.gradient_accumulation_steps
+                        loss.backward()
+                        micro_steps += 1
 
-                        self.optimizer.step()
-                        self.scheduler.step()
-                        optimizer_steps += 1
+                        if micro_steps % self.arguments.gradient_accumulation_steps == 0:
+                            train_loss = accum_loss_sum / max(accum_token_count, 1)
+                            self.monitor_data.last_train_loss = train_loss
+                            self.monitor_data.recent_train_losses.append(train_loss)
+                            accum_loss_sum = 0.0
+                            accum_token_count = 0
 
-                        if (
-                            optimizer_steps % self.arguments.eval_steps == 0
-                            or optimizer_steps == self.arguments.max_steps
-                        ):
+                            grad_norm = clip_grad_norm_(
+                                self.model.parameters(),
+                                max_norm=self.arguments.max_grad_norm if self.arguments.max_grad_norm else float("inf"),
+                            )
+                            self.monitor_data.last_grad_norm = grad_norm.item()
+
+                            self.optimizer.step()
+                            self.scheduler.step()
+                            optimizer_steps += 1
+
+                            now = time.perf_counter()
+                            step_elapsed = max(now - self.monitor_data.last_update_time, 1e-6)
+                            self.monitor_data.last_update_time = now
+                            self.monitor_data.recent_tokens_per_sec.append(self.token_per_update / step_elapsed)
+                            self._refresh_live(optimizer_steps)
+
                             if self.is_main_process:
-                                print(f"[Eval] start at optimizer step {optimizer_steps}/{self.arguments.max_steps}")
+                                with open("logs/metric.jsonl", mode="a", encoding="utf-8") as f:
+                                    data = {
+                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "step": optimizer_steps,
+                                        "lr": f"{self.optimizer.param_groups[0]['lr']:.6g}",
+                                        "loss": f"{self.monitor_data.last_train_loss:.4f}",
+                                        "grad_nrom": f"{float(self.monitor_data.last_grad_norm):.4f}",
+                                    }
+                                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
-                            self.monitor_data["last_eval_loss"] = self._evaluate()
-                            try:
-                                self.monitor_data["last_eval_ppl"] = math.exp(self.monitor_data["last_eval_loss"])
-                            except OverflowError:
-                                self.monitor_data["last_eval_ppl"] = float("inf")
+                            if (
+                                optimizer_steps % self.arguments.eval_steps == 0
+                                or optimizer_steps == self.arguments.max_steps
+                            ):
+                                self.display_mode = "eval"
+                                self._refresh_live(optimizer_steps)
+                                self._emit_event(
+                                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                                    f"[eval] start step={optimizer_steps}/{self.arguments.max_steps}"
+                                )
 
-                            if self.is_main_process:
-                                self._log_eval_metrics(epoch=epoch, optimizer_steps=optimizer_steps)
+                                self.monitor_data.last_eval_loss = self._evaluate()
+                                try:
+                                    self.monitor_data.last_eval_ppl = math.exp(self.monitor_data.last_eval_loss)
+                                except OverflowError:
+                                    self.monitor_data.last_eval_ppl = float("inf")
 
-                        if self.is_main_process and (
-                            optimizer_steps == 1
-                            or optimizer_steps % self.arguments.logging_steps == 0
-                            or optimizer_steps % self.arguments.eval_steps == 0
-                            or optimizer_steps == self.arguments.max_steps
-                        ):
-                            self._log_train_metrics(epoch=epoch, optimizer_steps=optimizer_steps)
+                                self._emit_event(
+                                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                                    f"[eval] done step={optimizer_steps} "
+                                    f"loss={self.monitor_data.last_eval_loss:.4f} "
+                                    f"ppl={self.monitor_data.last_eval_ppl:.4f}"
+                                )
+                                self.display_mode = "train"
+                                self._refresh_live(optimizer_steps)
 
-                        if optimizer_steps % self.arguments.save_steps == 0:
-                            self._save_checkpoint(optimizer_steps)
+                            if optimizer_steps % self.arguments.save_steps == 0:
+                                self._save_checkpoint(optimizer_steps)
 
-                        self.optimizer.zero_grad(set_to_none=True)
+                            self.optimizer.zero_grad(set_to_none=True)
 
-                if optimizer_steps >= self.arguments.max_steps:
-                    break
+                    if optimizer_steps >= self.arguments.max_steps:
+                        break
 
-            epoch += 1
+                epoch += 1
 
         self._save_checkpoint(optimizer_steps=None)
+        self._emit_event(
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [done] training finished at step={optimizer_steps}"
+        )
 
         if self.is_distributed:
             dist.destroy_process_group()
@@ -166,10 +208,6 @@ class PretrainingTrainer:
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             state_dict = self.model.module.state_dict() if self.is_distributed else self.model.state_dict()
             save_file(state_dict, checkpoint_path)
-
-            if optimizer_steps is None and self.writer is not None:
-                self.writer.flush()
-                self.writer.close()
 
     def _init_distributed(self):
         is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
@@ -235,7 +273,8 @@ class PretrainingTrainer:
                 find_unused_parameters=False,
                 gradient_as_bucket_view=True,
             )
-        model = torch.compile(model, mode="default")
+        if self.arguments.use_torch_complie:
+            model = torch.compile(model, mode="default")
 
         return config, tokenizer, model
 
@@ -258,6 +297,7 @@ class PretrainingTrainer:
             scheduler = CosineAnnealingLR(self.optimizer, T_max=self.arguments.max_steps)
         return scheduler
 
+    @no_type_check
     @torch.no_grad()
     def _evaluate(self):
         self.model.eval()
@@ -287,77 +327,72 @@ class PretrainingTrainer:
         self.model.train()
         return mean_loss
 
-    def _init_tensorboard(
-        self,
-        log_dir: str,
-        flush_secs: int,
-    ):
-        self.writer: SummaryWriter | None = None
+    def _live_context(self):
+        if not self.is_main_process:
+            return nullcontext()
+
+        self.progress = Progress(
+            TextColumn("[bold cyan]{task.fields[mode]}", justify="right"),
+            BarColumn(bar_width=None),
+            TaskProgressColumn(),
+            TextColumn("[bold]{task.completed:.0f} / {task.total:.0f}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=self.console,
+            expand=True,
+        )
+
+        self.progress_task_id = self.progress.add_task(
+            "train",
+            total=self.arguments.max_steps,
+            completed=0,
+            mode="train",
+        )
+
+        self.live = Live(
+            self._render_dashboard(),
+            console=self.console,
+            refresh_per_second=4,
+            transient=False,
+        )
+
+        return self.live
+
+    def _refresh_live(self, optimizer_steps: int):
         if not self.is_main_process:
             return
 
-        if log_dir is None:
-            run_name = datetime.now().strftime("run_%Y%m%d_%H%M%S")
-            log_dir = os.path.join(self.output_path, "tensorboard", run_name)  # type: ignore
+        assert self.live is not None and self.progress is not None and self.progress_task_id is not None
+        mode_text = "Eval" if self.display_mode == "eval" else "Train"
+        self.progress.update(self.progress_task_id, completed=optimizer_steps, mode=mode_text)
+        self.live.update(self._render_dashboard(), refresh=True)
 
-        os.makedirs(log_dir, exist_ok=True)
-        self.writer = SummaryWriter(log_dir=log_dir, flush_secs=flush_secs)
+    def _render_dashboard(self):
+        metrics_text = Text(self._build_metrics_line(), overflow="ellipsis", no_wrap=True)
+        assert self.progress is not None
+        return Group(self.progress, metrics_text)
 
-        self.writer.add_text(
-            "config/train_args",
-            json.dumps(
-                {
-                    "lr": self.arguments.learning_rate,
-                    "per_device_train_batch_size": self.arguments.per_device_train_batch_size,
-                    "per_device_eval_batch_size": self.arguments.per_device_eval_batch_size,
-                    "gradient_accumulation_steps": self.arguments.gradient_accumulation_steps,
-                    "warmup_ratio": self.arguments.warmup_steps_ratio,
-                    "warmup_start_factor": self.arguments.warmup_start_factor,
-                    "max_grad_norm": self.arguments.max_grad_norm,
-                    "eval_steps_ratio": self.arguments.eval_steps_ratio,
-                    "logging_steps": self.arguments.logging_steps,
-                    "world_size": self.world_size,
-                    "token_per_update": self.token_per_update,
-                    "max_steps": self.arguments.max_steps,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            0,
-        )
-        self.writer.flush()
-        print(f"[TensorBoard] log_dir: {log_dir}")
+    def _build_metrics_line(self):
+        loss_window = self.monitor_data.recent_train_losses
+        speed_window = self.monitor_data.recent_tokens_per_sec
+        avg_loss = sum(loss_window) / len(loss_window) if loss_window else 0.0
+        avg_tokens = sum(speed_window) / len(speed_window) if speed_window else 0.0
+        lr = self.optimizer.param_groups[0]["lr"]
+        eval_display = "running..." if self.display_mode == "eval" else f"{self.monitor_data.last_eval_loss:.4f}"
+        ppl_display = "running..." if self.display_mode == "eval" else f"{self.monitor_data.last_eval_ppl:.4f}"
 
-    def _log_train_metrics(self, epoch: int, optimizer_steps: int):
-        if self.writer is None:
-            return
-
-        elapsed = time.perf_counter() - self.monitor_data["start_time"]
-        tokens_seen = optimizer_steps * self.token_per_update
-        tokens_per_sec = tokens_seen / max(elapsed, 1e-6)
-        eta_seconds = (self.arguments.max_steps - optimizer_steps) * (elapsed / max(optimizer_steps, 1))
-        avg_train_loss = sum(self.monitor_data["recent_train_losses"]) / max(
-            len(self.monitor_data["recent_train_losses"]), 1
+        return (
+            f"step_loss: {self.monitor_data.last_train_loss:.4f} | "
+            f"avg_loss@{max(int(self.arguments.logging_steps), 1)}: {avg_loss:.4f} | "
+            f"grad: {self.monitor_data.last_grad_norm:.4f} | "
+            f"lr: {lr:.6g} | "
+            f"tok/s(avg): {avg_tokens:,.0f} | "
+            f"eval_loss: {eval_display} | ppl: {ppl_display}"
         )
 
-        self.writer.add_scalar("train/loss", self.monitor_data["last_train_loss"], optimizer_steps)
-        self.writer.add_scalar("train/loss_avg_100", avg_train_loss, optimizer_steps)
-        self.writer.add_scalar("train/grad_norm", self.monitor_data["last_grad_norm"], optimizer_steps)
-        self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]["lr"], optimizer_steps)
-        self.writer.add_scalar("train/tokens_seen", tokens_seen, optimizer_steps)
-        self.writer.add_scalar("train/tokens_per_sec", tokens_per_sec, optimizer_steps)
-        self.writer.add_scalar("train/eta_seconds", eta_seconds, optimizer_steps)
-        self.writer.add_scalar("train/epoch", epoch, optimizer_steps)
-        self.writer.flush()
-
-    def _log_eval_metrics(self, epoch: int, optimizer_steps: int):
-        if self.writer is None:
-            return
-
-        self.writer.add_scalar("eval/loss", self.monitor_data["last_eval_loss"], optimizer_steps)
-        self.writer.add_scalar("eval/ppl", self.monitor_data["last_eval_ppl"], optimizer_steps)
-        self.writer.add_scalar("eval/epoch", epoch, optimizer_steps)
-        self.writer.flush()
+    def _emit_event(self, message: str):
+        if self.is_main_process and self.live is not None:
+            self.live.console.print(message)
 
 
 if __name__ == "__main__":
@@ -367,5 +402,6 @@ if __name__ == "__main__":
         arguments=arguments,
         data_dir="data/pretraining",
         output_path="weight",
-        log_dir="logs",
     )
+    print(arguments.model_dump_json())
+    trainer()
