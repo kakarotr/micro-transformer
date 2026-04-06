@@ -4,9 +4,10 @@ import os
 import time
 from collections import deque
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import no_type_check
+from typing import Literal, no_type_check
 
 import torch
 import torch.distributed as dist
@@ -37,6 +38,15 @@ from models.train.loss import compute_loss, eval_compute_loss
 from models.train.main import MetricsData, TrainingArguments, parse_args
 
 
+@dataclass
+class TrainState:
+    micro_steps: int = 0
+    optimizer_steps: int = 0
+    epoch: int = 0
+    accum_loss_sum: float = 0.0
+    accum_token_count: float = 0.0
+
+
 class PretrainingTrainer:
     def __init__(
         self,
@@ -45,6 +55,7 @@ class PretrainingTrainer:
         arguments: TrainingArguments,
         data_dir: str,
         output_path: str,
+        training_stage: Literal["pretrain", "continued_pretrain"] = "pretrain",
     ):
         self.arguments = arguments
         self.output_path = output_path
@@ -79,124 +90,145 @@ class PretrainingTrainer:
         )
 
     def __call__(self):
-        micro_steps = 0
-        optimizer_steps = 0
-        epoch = 0
-        self.optimizer.zero_grad(set_to_none=True)
-        accum_loss_sum = 0.0
-        accum_token_count = 0
-        self.monitor_data.start_time = time.perf_counter()
-        self.monitor_data.last_update_time = self.monitor_data.start_time
+        state = self._init_train_state()
 
         with self._live_context():
-            self._refresh_live(optimizer_steps)
-
-            while optimizer_steps < self.arguments.max_steps:
-                if self.train_sampler is not None:
-                    self.train_sampler.set_epoch(epoch)
-
-                for batch in self.train_dataloader:
-                    input_ids = batch.to(device=self.device, non_blocking=True)
-                    labels = input_ids
-
-                    is_update_step = ((micro_steps + 1) % self.arguments.gradient_accumulation_steps) == 0
-                    sync_context = self.model.no_sync() if self.is_distributed and not is_update_step else nullcontext()
-
-                    with sync_context:
-                        with torch.autocast("cuda", dtype=torch.bfloat16):
-                            hidden_states = self.model(input_ids)
-                            lm_head_weight = (
-                                self.model.lm_head.weight
-                                if not self.is_distributed
-                                else self.model.module.lm_head.weight
-                            )
-                            raw_loss = compute_loss(hidden_states, lm_head_weight, labels)
-
-                        valid_token_count = labels[:, 1:].ne(-100).sum().item()
-                        accum_loss_sum += raw_loss.detach().item() * valid_token_count
-                        accum_token_count += valid_token_count
-
-                        loss = raw_loss / self.arguments.gradient_accumulation_steps
-                        loss.backward()
-                        micro_steps += 1
-
-                        if micro_steps % self.arguments.gradient_accumulation_steps == 0:
-                            train_loss = accum_loss_sum / max(accum_token_count, 1)
-                            self.monitor_data.last_train_loss = train_loss
-                            self.monitor_data.recent_train_losses.append(train_loss)
-                            accum_loss_sum = 0.0
-                            accum_token_count = 0
-
-                            grad_norm = clip_grad_norm_(
-                                self.model.parameters(),
-                                max_norm=self.arguments.max_grad_norm if self.arguments.max_grad_norm else float("inf"),
-                            )
-                            self.monitor_data.last_grad_norm = grad_norm.item()
-
-                            self.optimizer.step()
-                            self.scheduler.step()
-                            optimizer_steps += 1
-
-                            now = time.perf_counter()
-                            step_elapsed = max(now - self.monitor_data.last_update_time, 1e-6)
-                            self.monitor_data.last_update_time = now
-                            self.monitor_data.recent_tokens_per_sec.append(self.token_per_update / step_elapsed)
-                            self._refresh_live(optimizer_steps)
-
-                            if self.is_main_process:
-                                with open("logs/metric.jsonl", mode="a", encoding="utf-8") as f:
-                                    data = {
-                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        "step": optimizer_steps,
-                                        "lr": f"{self.optimizer.param_groups[0]['lr']:.6g}",
-                                        "loss": f"{self.monitor_data.last_train_loss:.4f}",
-                                        "grad_nrom": f"{float(self.monitor_data.last_grad_norm):.4f}",
-                                    }
-                                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
-
-                            if (
-                                optimizer_steps % self.arguments.eval_steps == 0
-                                or optimizer_steps == self.arguments.max_steps
-                            ):
-                                self.display_mode = "eval"
-                                self._refresh_live(optimizer_steps)
-                                self._emit_event(
-                                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                                    f"[eval] start step={optimizer_steps}/{self.arguments.max_steps}"
-                                )
-
-                                self.monitor_data.last_eval_loss = self._evaluate()
-                                try:
-                                    self.monitor_data.last_eval_ppl = math.exp(self.monitor_data.last_eval_loss)
-                                except OverflowError:
-                                    self.monitor_data.last_eval_ppl = float("inf")
-
-                                self._emit_event(
-                                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                                    f"[eval] done step={optimizer_steps} "
-                                    f"loss={self.monitor_data.last_eval_loss:.4f} "
-                                    f"ppl={self.monitor_data.last_eval_ppl:.4f}"
-                                )
-                                self.display_mode = "train"
-                                self._refresh_live(optimizer_steps)
-
-                            if optimizer_steps % self.arguments.save_steps == 0:
-                                self._save_checkpoint(optimizer_steps)
-
-                            self.optimizer.zero_grad(set_to_none=True)
-
-                    if optimizer_steps >= self.arguments.max_steps:
-                        break
-
-                epoch += 1
+            self._refresh_live(state.optimizer_steps)
+            self._run_training_loop(state)
 
         self._save_checkpoint(optimizer_steps=None)
         self._emit_event(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [done] training finished at step={optimizer_steps}"
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [done] training finished at step={state.optimizer_steps}"
         )
 
         if self.is_distributed:
             dist.destroy_process_group()
+
+    def _init_train_state(self):
+        self.optimizer.zero_grad(set_to_none=True)
+        now = time.perf_counter()
+        self.monitor_data.start_time = now
+        self.monitor_data.last_update_time = now
+        return TrainState()
+
+    def _run_training_loop(self, state: TrainState):
+        while state.optimizer_steps < self.arguments.max_steps:
+            self._run_epoch(state)
+
+    def _run_epoch(self, state: TrainState):
+        if self.train_sampler is not None:
+            self.train_sampler.set_epoch(state.epoch)
+
+        for batch in self.train_dataloader:
+            self._run_micro_step(batch, state)
+            if state.optimizer_steps >= self.arguments.max_steps:
+                break
+
+        state.epoch += 1
+
+    def _run_micro_step(self, batch: torch.Tensor, state: TrainState):
+        input_ids = batch.to(device=self.device, non_blocking=True)
+        labels = input_ids
+
+        is_update_step = ((state.micro_steps + 1) % self.arguments.gradient_accumulation_steps) == 0
+        sync_context = self.model.no_sync() if self.is_distributed and not is_update_step else nullcontext()
+
+        with sync_context:
+            raw_loss = self._compute_raw_loss(input_ids, labels)
+            self._accumulate_loss_metrics(raw_loss, labels, state)
+
+            loss = raw_loss / self.arguments.gradient_accumulation_steps
+            loss.backward()
+            state.micro_steps += 1
+
+            if state.micro_steps % self.arguments.gradient_accumulation_steps != 0:
+                return
+
+            self._apply_optimizer_step(state)
+            self._handle_step_side_effects(state)
+
+    def _compute_raw_loss(self, input_ids: torch.Tensor, labels: torch.Tensor):
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            hidden_states = self.model(input_ids)
+            lm_head_weight = self.model.lm_head.weight if not self.is_distributed else self.model.module.lm_head.weight
+            return compute_loss(hidden_states, lm_head_weight, labels)
+
+    def _accumulate_loss_metrics(self, raw_loss: torch.Tensor, labels: torch.Tensor, state: TrainState):
+        valid_token_count = labels[:, 1:].ne(-100).sum().item()
+        state.accum_loss_sum += raw_loss.detach().item() * valid_token_count
+        state.accum_token_count += valid_token_count
+
+    def _apply_optimizer_step(self, state: TrainState):
+        train_loss = state.accum_loss_sum / max(state.accum_token_count, 1)
+        self.monitor_data.last_train_loss = train_loss
+        self.monitor_data.recent_train_losses.append(train_loss)
+        state.accum_loss_sum = 0.0
+        state.accum_token_count = 0
+
+        grad_norm = clip_grad_norm_(
+            self.model.parameters(),
+            max_norm=self.arguments.max_grad_norm if self.arguments.max_grad_norm else float("inf"),
+        )
+        self.monitor_data.last_grad_norm = grad_norm.item()
+
+        self.optimizer.step()
+        self.scheduler.step()
+        state.optimizer_steps += 1
+        self._update_throughput_metrics()
+
+    def _update_throughput_metrics(self):
+        now = time.perf_counter()
+        step_elapsed = max(now - self.monitor_data.last_update_time, 1e-6)
+        self.monitor_data.last_update_time = now
+        self.monitor_data.recent_tokens_per_sec.append(self.token_per_update / step_elapsed)
+
+    def _handle_step_side_effects(self, state: TrainState):
+        self._refresh_live(state.optimizer_steps)
+        self._write_metrics_log(state.optimizer_steps)
+        self._run_eval(state.optimizer_steps)
+        if state.optimizer_steps % self.arguments.save_steps == 0:
+            self._save_checkpoint(state.optimizer_steps)
+        self.optimizer.zero_grad(set_to_none=True)
+
+    def _write_metrics_log(self, optimizer_steps: int):
+        if not self.is_main_process:
+            return
+
+        with open("logs/metric.jsonl", mode="a", encoding="utf-8") as f:
+            data = {
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "step": optimizer_steps,
+                "lr": f"{self.optimizer.param_groups[0]['lr']:.6g}",
+                "loss": f"{self.monitor_data.last_train_loss:.4f}",
+                "grad_nrom": f"{float(self.monitor_data.last_grad_norm):.4f}",
+            }
+            f.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+    def _run_eval(self, optimizer_steps: int):
+        if not (optimizer_steps % self.arguments.eval_steps == 0 or optimizer_steps == self.arguments.max_steps):
+            return
+
+        self.display_mode = "eval"
+        self._refresh_live(optimizer_steps)
+        self._emit_event(
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"[eval] start step={optimizer_steps}/{self.arguments.max_steps}"
+        )
+
+        self.monitor_data.last_eval_loss = self._evaluate()
+        try:
+            self.monitor_data.last_eval_ppl = math.exp(self.monitor_data.last_eval_loss)
+        except OverflowError:
+            self.monitor_data.last_eval_ppl = float("inf")
+
+        self._emit_event(
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"[eval] done step={optimizer_steps} "
+            f"loss={self.monitor_data.last_eval_loss:.4f} "
+            f"ppl={self.monitor_data.last_eval_ppl:.4f}"
+        )
+        self.display_mode = "train"
+        self._refresh_live(optimizer_steps)
 
     def _save_checkpoint(self, optimizer_steps: int | None):
         if self.is_main_process:
@@ -398,10 +430,10 @@ class PretrainingTrainer:
 if __name__ == "__main__":
     arguments = parse_args()
     trainer = PretrainingTrainer(
-        model_path="weight",
+        model_path="artifacts",
         arguments=arguments,
         data_dir="data/pretraining",
-        output_path="weight",
+        output_path="artifacts",
     )
     print(arguments.model_dump_json())
     trainer()
