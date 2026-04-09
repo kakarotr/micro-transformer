@@ -62,4 +62,3 @@ def eval_compute_loss(
     )
     valid_token_count = flat_labels.ne(ignore_index).sum()
     return loss, valid_token_count
-    return loss, valid_token_count

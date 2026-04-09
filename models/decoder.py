@@ -71,6 +71,7 @@ class Decoder(nn.Module):
         pad_token_id: int,
     ):
         super().__init__()
+        self.max_position_embeddings = max_position_embeddings
         self.embeddings = nn.Embedding(vocab_size, hidden_size, padding_idx=pad_token_id)
         self.rope = DefaultRope(
             base=rope_base, max_position_embeddings=max_position_embeddings, head_dim=hidden_size // num_attention_heads
@@ -103,6 +104,7 @@ class Decoder(nn.Module):
         use_padding_mask: bool = False,
     ) -> torch.Tensor:
         _, seq_len = input_ids.size()
+        device = input_ids.device
 
         if use_cache or past_key_values is not None:
             raise NotImplementedError("Decoder KV cache path is not implemented yet.")
@@ -112,29 +114,29 @@ class Decoder(nn.Module):
                 f"seq_len ({seq_len}) exceeds max_position_embeddings ({self.rope.max_position_embeddings})"
             )
 
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids, dtype=torch.long)
-        else:
-            if attention_mask.ndim != 2 or attention_mask.shape != input_ids.shape:
-                raise ValueError("attention_mask must have same shape as input_ids")
+        if use_padding_mask:
+            if attention_mask is None:
+                attention_mask = torch.ones_like(input_ids, dtype=torch.long)
+            else:
+                if attention_mask.ndim != 2 or attention_mask.shape != input_ids.shape:
+                    raise ValueError("attention_mask must have same shape as input_ids")
 
-        if position_ids is None:
-            position_ids = attention_mask.cumsum(dim=-1) - 1
-            position_ids = position_ids.clamp_min(0)
-            position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+            if position_ids is None:
+                position_ids = attention_mask.cumsum(dim=-1) - 1
+                position_ids = position_ids.clamp_min(0)
+                position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+            else:
+                if position_ids.ndim not in (1, 2):
+                    raise ValueError("position_ids must be 1D or 2D")
+                if position_ids.shape[-1] != seq_len:
+                    raise ValueError("position_ids.shape[-1] must equal seq_len")
         else:
-            if position_ids.ndim not in (1, 2):
-                raise ValueError("position_ids must be 1D or 2D")
-            if position_ids.shape[-1] != seq_len:
-                raise ValueError("position_ids.shape[-1] must equal seq_len")
-            # if (position_ids < 0).any() or (position_ids >= self.rope.max_position_embeddings).any():
-            #     raise ValueError("position_ids out of range")
-
-        device = input_ids.device
+            position_ids = torch.arange(self.max_position_embeddings, device=device).unsqueeze(0)
 
         hidden_states = self.embedd_dropout(self.embeddings(input_ids))
 
         if use_padding_mask:
+            assert attention_mask is not None
             causal_mask = create_causal_mask(seq_len, device=device)
             padding_mask = create_padding_mask(attention_mask=attention_mask, device=device)
             attn_mask = causal_mask & padding_mask

@@ -276,6 +276,9 @@ class PretrainingTrainer:
         train_dataloader = DataLoader(
             self.train_dataset,
             batch_size=self.arguments.per_device_train_batch_size,
+            num_workers=8,
+            persistent_workers=True,
+            prefetch_factor=4,
             sampler=train_sampler,
             shuffle=(train_sampler is None),
             pin_memory=True,
@@ -284,6 +287,9 @@ class PretrainingTrainer:
         eval_dataloader = DataLoader(
             self.eval_dataset,
             batch_size=self.arguments.per_device_eval_batch_size,
+            num_workers=8,
+            persistent_workers=True,
+            prefetch_factor=4,
             sampler=eval_sampler,
             shuffle=False,
             pin_memory=True,
@@ -294,9 +300,14 @@ class PretrainingTrainer:
 
     def _get_tokenizer_and_model(self, model_path: str):
         tokenizer = AutoTokenizer.from_pretrained(model_path)
+
         with open(f"{model_path}/config.json", mode="r", encoding="utf-8") as f:
             config = TransformerConfig.model_validate_json(f.read())
         model = CausalLanguageModel(config=config).to(self.device)
+
+        if self.arguments.use_torch_complie:
+            model = torch.compile(model, mode="default")
+
         if self.is_distributed:
             model = torch.nn.parallel.DistributedDataParallel(
                 model,
@@ -305,9 +316,6 @@ class PretrainingTrainer:
                 find_unused_parameters=False,
                 gradient_as_bucket_view=True,
             )
-        if self.arguments.use_torch_complie:
-            model = torch.compile(model, mode="default")
-
         return config, tokenizer, model
 
     def _init_scheduler(self):
